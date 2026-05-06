@@ -1,0 +1,1539 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+#import git  # GitPython
+
+VERSION = "0.1.0"
+sub_argv: Optional[list[str]] = None
+
+# Color definitions
+COLOR_BLACK = "\x1b[30m"
+COLOR_RED = "\x1b[31m"
+COLOR_GREEN = "\x1b[32m"
+COLOR_YELLOW = "\x1b[33m"
+COLOR_BLUE = "\x1b[34m"
+COLOR_MAGENTA = "\x1b[35m"
+COLOR_CYAN = "\x1b[36m"
+COLOR_WHITE = "\x1b[37m"
+COLOR_GRAY = "\x1b[90m"  # Bright Black
+COLOR_BOLD = "\x1b[1m"
+COLOR_UNDERLINE = "\x1b[4m"
+COLOR_RESET = "\x1b[m"
+
+# Color configurations
+COL_APPLIED = COLOR_BOLD + COLOR_UNDERLINE + COLOR_BLUE
+COL_UNAPPLIED = COLOR_BOLD + COLOR_GRAY
+COL_UNGUARDED = COLOR_GREEN
+COL_POS_GUARD = COLOR_YELLOW
+COL_NEG_GUARD = COLOR_RED
+COL_OFF = COLOR_RESET
+
+
+class Configurations:
+    def __init__(self):
+        self.stg = "stg"
+        self.git = "git"
+
+
+conf = Configurations()
+
+
+def does_search_across_fs() -> bool:
+    val = os.getenv("GIT_DISCOVERY_ACROSS_FILESYSTEM", "")
+    return val == "1" or val.lower() == "true"
+
+
+def get_git_topdir(path: Optional[Path] = None) -> Optional[Path]:
+    """Get the git toplevel directory.
+    Same as `git rev-parse --show-toplevel`.
+    """
+    if not path:
+        path = Path.cwd()
+    path = path.resolve()
+    while True:
+        if (path / ".git").exists():
+            return path
+        parent = path.parent
+        if parent.is_mount() and not does_search_across_fs():
+            # Filesystem boundary
+            return None
+        if parent == path:
+            # Root directory.
+            return None
+        # TODO: Check GIT_CEILING_DIRECTORIES
+        path = parent
+
+
+def get_gitdir(path: Optional[Path] = None) -> Optional[Path]:
+    """Get the git directory. (E.g. ".git")
+    Same as `git rev-parse --git-dir` except that this returns an absolute path.
+    """
+    gittop = get_git_topdir(path)
+    if not gittop:
+        return None
+    gitdir = gittop / ".git"
+    if gitdir.is_dir():
+        return gitdir
+    if gitdir.is_file():
+        with gitdir.open() as f:
+            s = f.readline()
+            m = re.match(r"gitdir: (.+)$", s)
+            if m:
+                gitdir = gittop / m.group(1)
+                if gitdir.is_dir():
+                    return gitdir
+    return None
+
+
+def get_patchesdir(path: Optional[Path] = None) -> Optional[Path]:
+    """Get the patches directory. (E.g. ".git/patches")"""
+    git_dir = get_gitdir(path)
+    if not git_dir:
+        return None
+    return git_dir / "patches"
+
+
+def ensure_patchesdir(path: Optional[Path] = None, create: bool = False) -> Path:
+    patdir = get_patchesdir(path)
+    if not patdir:
+        print("stq: .git directory not found.", file=sys.stderr)
+        sys.exit(1)
+    if not patdir.exists():
+        if create:
+            patdir.mkdir(exist_ok=True)
+        else:
+            print("stq: Please run 'stq init' first.", file=sys.stderr)
+            sys.exit(1)
+    return patdir
+
+
+def read_guards(guards: Path) -> list[str]:
+    guards_list: list[str] = []
+
+    if not guards.exists():
+        return guards_list
+
+    with guards.open() as f:
+        for s in f.readlines():
+            guards_list += [s.strip()]
+
+    return guards_list
+
+
+def write_guards(guards: Path, guards_list: list[str]) -> None:
+    with guards.open("w") as f:
+        for s in guards_list:
+            print(s, file=f)
+
+
+class SeriesItem:
+    def __init__(
+        self,
+        patchfile: str,
+        patchname: str,
+        positive_guards: list[str],
+        negative_guards: list[str],
+        applied: Optional[str] = None,  # None, "applied", "unapplied"
+        guarded: Optional[str] = None,  # None, "guarded", "unguarded"
+        commitid: Optional[str] = None,
+    ):
+        assert applied in [None, "applied", "unapplied"]
+        assert guarded in [None, "guarded", "unguarded"]
+
+        self.patchfile = patchfile
+        self.patchname = patchname
+        self.positive_guards = positive_guards
+        self.negative_guards = negative_guards
+        self.applied = applied
+        self.guarded = guarded
+        self.commitid = commitid
+
+
+class StatusItem:
+    def __init__(self, commitid: str, patchname: str):
+        self.commitid = commitid
+        self.patchname = patchname
+
+
+def read_series(series: Path) -> list[SeriesItem]:
+    series_list: list[SeriesItem] = []
+
+    if not series.exists():
+        return series_list
+
+    with series.open() as f:
+        for s in f.readlines():
+            patchfile, *items = s.split()
+
+            if patchfile.startswith("#"):
+                # Skip comment
+                continue
+
+            patchname = ""
+            positive_guards: list[str] = []
+            negative_guards: list[str] = []
+
+            for i in items:
+                t = i[:2]
+                name = i[2:]
+
+                if t == "#=":
+                    patchname = name
+                elif t == "#+":
+                    positive_guards += [name]
+                elif t == "#-":
+                    negative_guards += [name]
+                else:
+                    # TODO: print error
+                    pass
+
+            series_list += [
+                SeriesItem(patchfile, patchname, positive_guards, negative_guards)
+            ]
+
+    return series_list
+
+
+def write_series(series: Path, series_list: list[SeriesItem]) -> None:
+    with series.open("w") as f:
+        for si in series_list:
+            s = si.patchfile
+            if si.patchname:
+                s += f" #={si.patchname}"
+            if si.positive_guards:
+                for i in si.positive_guards:
+                    s += f" #+{i}"
+            if si.negative_guards:
+                for i in si.negative_guards:
+                    s += f" #-{i}"
+            print(s, file=f)
+
+
+def update_series(
+    series_list: list[SeriesItem], patchname: str, insert_idx: int, applied: bool
+) -> tuple[str, bool]:
+    # Search patchname from series_list
+    for si in series_list:
+        if si.patchname == patchname or si.patchfile == patchname:
+            if applied:
+                si.commitid = ""  # get_stg_commitid(patchname)
+                si.applied = "applied"
+            else:
+                si.applied = "unapplied"
+            return si.patchfile, False
+
+    # Not found, add to series_list
+    if insert_idx == -1:
+        insert_idx = len(series_list)
+    if applied:
+        applied_str = "applied"
+        commitid = ""  # get_stg_commitid(patchname)
+    else:
+        applied_str = "unapplied"
+        commitid = None
+    series_list.insert(
+        insert_idx,
+        SeriesItem(patchname, "", [], [], applied_str, "unguarded", commitid),
+    )
+    return patchname, True
+
+
+def update_series_by_guards(
+    series_list: list[SeriesItem], guards_list: list[str]
+) -> None:
+    for si in series_list:
+        if si.positive_guards:
+            guarded = "guarded"
+        else:
+            guarded = "unguarded"
+
+        for pg in si.positive_guards:
+            if pg in guards_list:
+                guarded = "unguarded"
+        for ng in si.negative_guards:
+            if ng in guards_list:
+                guarded = "guarded"
+
+        si.guarded = guarded
+
+
+def update_series_by_status(
+    series_list: list[SeriesItem], status_list: list[StatusItem]
+) -> None:
+    for si in series_list:
+        if si.patchname:
+            patchname = si.patchname
+        else:
+            patchname = si.patchfile
+
+        applied = "unapplied"
+        for sti in status_list:
+            if patchname == sti.patchname:
+                applied = "applied"
+
+        si.applied = applied
+
+
+def get_matching_patch(series_list: list[SeriesItem], patch: str) -> int:
+    for i, si in enumerate(series_list):
+        if si.patchfile == patch or si.patchname == patch:
+            return i
+    return -1
+
+
+def get_last_applied_patch(series_list: list[SeriesItem]) -> int:
+    idx = -1
+    for i, si in enumerate(series_list):
+        if si.applied == "applied":
+            idx = i
+    return idx
+
+
+def get_next_ungarded_patch(series_list: list[SeriesItem], start_idx: int = -1) -> int:
+    if start_idx < 0:
+        idx = get_last_applied_patch(series_list)
+    else:
+        idx = start_idx
+    for i in range(idx + 1, len(series_list)):
+        si = series_list[i]
+        if si.guarded == "unguarded":
+            return i
+    return -1
+
+
+def get_ungarded_patch_indexes(
+    series_list: list[SeriesItem], start_idx: int = -1
+) -> list[int]:
+    idx_list: list[int] = []
+    idx = start_idx
+    while (idx := get_next_ungarded_patch(series_list, idx)) >= 0:
+        idx_list += [idx]
+    return idx_list
+
+
+def get_ungarded_patch_list(
+    series_list: list[SeriesItem], start_idx: int = -1
+) -> list[SeriesItem]:
+    idx_list = get_ungarded_patch_indexes(series_list, start_idx)
+    return [series_list[i] for i in idx_list]
+
+
+def get_stg_commitid(patchname: str) -> str:
+    proc = subprocess.Popen(
+        # Show only commit ID
+        [conf.stg, "show", "-O", "--no-patch", "-O", "--format=%H", patchname],
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    return proc.stdout.readline().rstrip()
+
+
+def run_stg_series(status: str = "all") -> list[tuple[bool, str]]:
+    assert status in ["all", "applied", "unapplied"]
+
+    stgcmd = [conf.stg, "series"]
+    if status == "applied":
+        stgcmd += ["--applied"]
+    elif status == "unapplied":
+        stgcmd += ["--unapplied"]
+
+    proc = subprocess.Popen(
+        stgcmd,
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    patch_list: list[tuple[bool, str]] = []
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        status, patch = line.rstrip().split(maxsplit=1)
+        if status == "+" or status == ">":
+            applied = True
+        else:
+            applied = False
+        patch_list += [(applied, patch)]
+
+    return patch_list
+
+
+def read_status(status: Path) -> list[StatusItem]:
+    status_list: list[StatusItem] = []
+
+    if not status.exists():
+        return status_list
+
+    with status.open() as f:
+        for s in f.readlines():
+            if s:
+                commitid, patchname = s.rstrip().split(":")
+                status_list += [StatusItem(commitid, patchname)]
+
+    return status_list
+
+
+def write_status(status: Path, status_list: list[StatusItem]) -> None:
+    with status.open("w") as f:
+        for si in status_list:
+            print(f"{si.commitid}:{si.patchname}", file=f)
+
+
+def write_status_from_series(status: Path, series_list: list[SeriesItem]) -> None:
+    with status.open("w") as f:
+        for si in series_list:
+            if si.applied == "applied":
+                patchname = si.patchname if si.patchname else si.patchfile
+                print(f"{si.commitid}:{patchname}", file=f)
+
+
+#def command_add(args: argparse.Namespace):
+#    print(args)
+#    raise NotImplementedError()
+
+
+def command_delete(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    remove_list: list[SeriesItem] = []
+    for patch in args.patch:
+        for si in series_list:
+            if si.patchfile == patch or si.patchname == patch:
+                # Patch found
+                if si.applied == "applied":
+                    print(
+                        f'stq: Cannot delete applied patch: "{patch}"', file=sys.stderr
+                    )
+                    sys.exit(1)
+                remove_list += [si]
+                break
+        else:
+            print(f'stq: Patch not found: "{patch}"', file=sys.stderr)
+            sys.exit(1)
+
+    # Run "stg delete"
+    patch_names = [si.patchname for si in remove_list]
+    res = subprocess.run([conf.stg, "delete", "--"] + patch_names)
+    if res.returncode:
+        sys.exit(res.returncode)
+
+    for si in remove_list:
+        series_list.remove(si)
+    write_series(series, series_list)
+
+
+def command_fold(args: argparse.Namespace):
+    print(args)
+    # TODO:
+    #  Run "stg squash"
+    #  Or, run "git apply --intent-to-add"
+    raise NotImplementedError()
+
+
+def show_guard_status(si: SeriesItem):
+    if si.applied == "applied":
+        print(f"{COL_APPLIED}{si.patchfile}{COL_OFF}:", end="")
+    elif si.applied == "unapplied":
+        print(f"{COL_UNAPPLIED}{si.patchfile}{COL_OFF}:", end="")
+    else:
+        print(f"{si.patchfile}:", end="")
+
+    if si.positive_guards or si.negative_guards:
+        for i in si.positive_guards:
+            print(f" {COL_POS_GUARD}+{i}{COL_OFF}", end="")
+        for i in si.negative_guards:
+            print(f" {COL_NEG_GUARD}-{i}{COL_OFF}", end="")
+    else:
+        print(f" {COL_UNGUARDED}unguarded{COL_OFF}", end="")
+    print()
+
+
+def show_guard_list(series_list: list[SeriesItem]):
+    for si in series_list:
+        show_guard_status(si)
+
+
+def command_guard(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    patch = args.patch
+    guard = args.guard
+
+    if args.list:
+        # Show guards list
+        show_guard_list(series_list)
+        return
+
+    if patch is not None:
+        if len(patch) > 0 and (patch[0] == "+" or patch[0] == "-"):
+            guard.insert(0, patch)
+            patch = None
+
+    if patch:
+        idx = get_matching_patch(series_list, patch)
+        if idx < 0:
+            print(f"stq: no patch named {patch}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        idx = get_last_applied_patch(series_list)
+        if idx < 0:
+            print("stq: no patches applied", file=sys.stderr)
+            sys.exit(1)
+
+    si = series_list[idx]
+
+    if not guard and not args.none:
+        # Show guards of the patch
+        show_guard_status(si)
+        return
+
+    # Update series
+    positive_guards: list[str] = []
+    negative_guards: list[str] = []
+    for g in guard:
+        if len(g) <= 1 or (g[0] != "+" and g[0] != "-"):
+            print(
+                f'stq: wrong guard name: {g}, must be prefixed by "+" or "-"',
+                file=sys.stderr,
+            )
+        if g[0] == "+":
+            positive_guards += [g[1:]]
+        if g[0] == "-":
+            negative_guards += [g[1:]]
+
+    si.positive_guards = positive_guards
+    si.negative_guards = negative_guards
+    write_series(series, series_list)
+
+
+def import_patches(patches: list[Path]) -> None:
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    #status = patdir / "status"
+    #status_list = read_status(status)
+    #guards = patdir / "guards"
+    #guards_list = read_guards(guards)
+
+    # TODO: check patch status
+
+    added_patches: list[SeriesItem] = []
+    for patch in patches:
+        print(f"stq: Importing {patch}")
+        shutil.copy(patch, patdir)
+        added_patches += [SeriesItem(patch.name, "", [], [])]
+
+    series_list += added_patches
+    write_series(series, series_list)
+
+
+def command_import(args: argparse.Namespace):
+    import_patches(args.patch)
+
+
+def command_mqimport(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    if not args.mq_dir.is_dir():
+        print(f"stq: Error: not a directory: {args.mq_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    series = args.mq_dir / "series"
+    if not series.is_file():
+        print(f"stq: Error: series file not found in {args.mq_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    if (patdir / "series").is_file():
+        print(f"stq: Error: series file already exists in {patdir}", file=sys.stderr)
+        sys.exit(1)
+
+    series_list = read_series(series)
+    for si in series_list:
+        patch = args.mq_dir / si.patchfile
+        print("Copying:", patch)
+        shutil.copy(patch, patdir)
+
+    print("Copying:", series)
+    shutil.copy(series, patdir)
+
+    guards = args.mq_dir / "guards"
+    if guards.is_file():
+        print("Copying:", guards)
+        shutil.copy(guards, patdir)
+
+
+def command_init(args: argparse.Namespace):
+    # Create .git/patches directory
+    patdir = ensure_patchesdir(create=True)
+
+    # Run "stg init"
+    res = subprocess.run([conf.stg, "init"])
+
+    # Create .gitignore
+    gitign = patdir / ".gitignore"
+    if not gitign.exists():
+        with gitign.open("w") as f:
+            print("guards", file=f)
+            print("status", file=f)
+
+    sys.exit(res.returncode)
+
+
+def command_new(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    if args.message:
+        message = args.message
+    else:
+        message = args.name
+
+    # Run "stg new"
+    proc = subprocess.Popen(
+        [conf.stg, "new", "-m", message, "--", args.name],
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    patchname = ""
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        print(line, end="")
+        m = re.match(r'Now at patch "(.*)"', line)
+        if m:
+            patchname = m.group(1)
+
+    if not patchname:
+        sys.exit(1)
+
+    commitid = ""  # get_stg_commitid(patchname)
+    status_list += [StatusItem(commitid, patchname)]
+
+    idx = get_last_applied_patch(series_list) + 1
+    series_list.insert(
+        idx,
+        SeriesItem(args.name, patchname, [], [], "applied", "unguarded", commitid),
+    )
+
+    write_series(series, series_list)
+    write_status(status, status_list)
+
+
+def run_stg_pop(popall: bool) -> int:
+    cmd = [conf.stg, "pop"]
+    if popall:
+        cmd += ["--all"]
+    proc = subprocess.Popen(
+        cmd,
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        print(line, end="")
+
+    return proc.returncode
+
+
+def command_pop(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    idx = get_last_applied_patch(series_list)
+    if idx < 0:
+        print("stq: no patches applied", file=sys.stderr)
+        sys.exit(1)
+
+    ret = run_stg_pop(args.all)
+    if ret != 0:
+        sys.exit(ret)
+
+    if args.all:
+        status_list.clear()
+    else:
+        status_list.pop()
+    write_status(status, status_list)
+
+
+def command_pull(args: argparse.Namespace):
+    #patdir = ensure_patchesdir()
+
+    #series = patdir / "series"
+    #series_list = read_series(series)
+    #status = patdir / "status"
+    #status_list = read_status(status)
+    #guards = patdir / "guards"
+    #guards_list = read_guards(guards)
+
+    # Run "stg pull"
+    stgcmd = [conf.stg, "pull"]
+    if args.nopush:
+        stgcmd += ["--nopush"]
+    if args.merged:
+        stgcmd += ["--merged"]
+    if args.repository:
+        stgcmd += ["--", args.repository]
+    res = subprocess.run(stgcmd)
+    if res.returncode:
+        sys.exit(res.returncode)
+
+    # Update metadata
+    # TODO: Use a better way
+    args.skip_stg = True
+    command_repair(args)
+
+    if args.merged:
+        # TODO: Remove merged patches
+        pass
+
+
+def run_stg_import(patchfile: Path) -> tuple[bool, str]:
+    proc = subprocess.Popen(
+        [conf.stg, "import", "--keep-cr", "--reject", "--", str(patchfile)],
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    apply_fail = False
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        print(line, end="")
+        m = re.match(r'  Now at patch "(.*)"', line)
+        if m:
+            return True, m.group(1)
+        m = re.match(r"stg import: Patch does not apply cleanly", line)
+        if m:
+            apply_fail = True
+            break
+
+    if apply_fail:
+        proc = subprocess.Popen(
+            [conf.stg, "new", "-m", "", "--", str(patchfile.name)],
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert proc.stdout
+
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                if proc.poll() is not None:
+                    break
+                continue
+            print(line, end="")
+            m = re.match(r'Now at patch "(.*)"', line)
+            if m:
+                return False, m.group(1)
+
+    return False, ""
+
+
+def run_stg_push_multi(
+    patchname_list: list[str],
+) -> tuple[bool, list[tuple[str, bool]]]:
+    stgcmd = [conf.stg, "push", "--"] + patchname_list
+    proc = subprocess.Popen(
+        stgcmd,
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    res: list[tuple[str, bool]] = []
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        print(line, end="")
+        m = re.match(r'Pushing patch "(.*)" ... done *(\(unmodified\))?', line)
+        if m:
+            unmodified = True if m.group(2) else False
+            res += [(m.group(1), unmodified)]
+
+    if proc.returncode != 0:
+        return False, res
+    return True, res
+
+
+def run_stg_push(patchname: str) -> tuple[str, bool]:
+    ok, res = run_stg_push_multi([patchname])
+    if not ok or len(res) == 0:
+        return "", True
+    return res[0]
+
+
+def get_first_unapplied_patch(
+    patch_list: list[tuple[bool, str]], start_idx: int = 0
+) -> int:
+    for i in range(start_idx, len(patch_list)):
+        if not patch_list[i][0]:
+            return i
+    return -1
+
+
+def command_push(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    idx = get_next_ungarded_patch(series_list)
+    if idx < 0:
+        print("stq: patch series already fully applied.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.all:
+        # Classify the patches:
+        #  1. Not applied yet, already in stg series
+        #  2. Not applied yet, not in stg series
+        filtered_list = get_ungarded_patch_list(series_list)
+        patch_list = run_stg_series("unapplied")
+
+        if len(patch_list) > 0:
+            patchname_list: list[str] = []
+            new_patch_list: list[tuple[bool, str]] = []
+            new_filtered_list: list[SeriesItem] = []
+            j = -1
+            for i, si in enumerate(filtered_list):
+                while True:
+                    j += 1
+                    if j >= len(patch_list):
+                        new_filtered_list += [filtered_list[i]]
+                        break
+                    if (
+                        si.patchname == patch_list[j][1]
+                        or si.patchfile == patch_list[j][1]
+                    ):
+                        patchname_list += [patch_list[j][1]]
+                        break
+                    else:
+                        new_patch_list += [patch_list[j]]
+            patch_list = new_patch_list
+
+            ok, ret = run_stg_push_multi(patchname_list)
+
+            for si, r in zip(filtered_list, ret):
+                patchname, unmodified = r
+                if not si.commitid or not unmodified:
+                    si.commitid = ""  # get_stg_commitid(patchname)
+                status_list += [StatusItem(si.commitid, patchname)]
+            if not ok:
+                write_series(series, series_list)
+                write_status(status, status_list)
+                sys.exit(1)
+
+            filtered_list = new_filtered_list
+
+        for si in filtered_list:
+            print(si.patchfile)
+            patchname = ""
+            for p in patch_list:
+                if si.patchname == p[1] or si.patchfile == p[1]:
+                    patchname = p[1]
+                    break
+            if patchname:
+                si.patchname, unmodified = run_stg_push(patchname)
+                if si.patchname:
+                    apply_cleanly = True
+                else:
+                    apply_cleanly = False
+            else:
+                apply_cleanly, si.patchname = run_stg_import(patdir / si.patchfile)
+                si.commitid = ""  # get_stg_commitid(si.patchname)
+            status_list += [StatusItem(si.commitid, si.patchname)]  # ty: ignore[invalid-argument-type]
+
+            if not apply_cleanly:
+                write_series(series, series_list)
+                write_status(status, status_list)
+                sys.exit(1)
+
+        write_series(series, series_list)
+        write_status(status, status_list)
+        return
+
+    unmodified = False
+    apply_cleanly = True
+    patch_list = run_stg_series()
+    for applied, pat in patch_list:
+        if series_list[idx].patchname == pat or series_list[idx].patchfile == pat:
+            if not applied:
+                patchname, unmodified = run_stg_push(pat)
+                if patchname:
+                    break
+    else:
+        apply_cleanly, patchname = run_stg_import(patdir / series_list[idx].patchfile)
+
+    if patchname:
+        series_list[idx].patchname = patchname
+        if not unmodified or not series_list[idx].commitid:
+            commitid = ""  # get_stg_commitid(patchname)
+            series_list[idx].commitid = commitid
+        status_list += [StatusItem(series_list[idx].commitid, patchname)]  # ty: ignore[invalid-argument-type]
+
+    write_series(series, series_list)
+    write_status(status, status_list)
+
+    if not apply_cleanly:
+        sys.exit(1)
+
+
+def command_qgit(args: argparse.Namespace, argv: list[str]):
+    patdir = ensure_patchesdir()
+
+    gitcmd = [conf.git]
+    gitcmd += ["-C", patdir]
+    gitcmd += argv
+
+    res = subprocess.run(gitcmd)
+    if res.returncode:
+        sys.exit(res.returncode)
+
+
+def command_refresh(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    idx = get_last_applied_patch(series_list)
+    if idx < 0:
+        print("stq: no patches applied", file=sys.stderr)
+        sys.exit(1)
+
+    res = subprocess.run([conf.stg, "refresh"])
+    if res.returncode:
+        sys.exit(res.returncode)
+
+    patchname = series_list[idx].patchname
+    commitid = ""  # get_stg_commitid(patchname)
+    if commitid:
+        status_list[-1].commitid = commitid
+
+    write_status(status, status_list)
+
+    with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
+        tmpdir = Path(tmpdirname)
+        # Export the patch to tmpdir
+        res = subprocess.run(
+            [
+                conf.stg,
+                "export",
+                "-d",
+                tmpdirname,
+                "--",
+                patchname,
+            ]
+        )
+        if res.returncode:
+            sys.exit(res.returncode)
+
+        shutil.copy(tmpdir / patchname, patdir / series_list[idx].patchfile)
+
+
+def command_rename(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    if args.patch2:
+        for i, si in enumerate(series_list):
+            if si.patchfile == args.patch1 or si.patchname == args.patch1:
+                idx = i
+                break
+        else:
+            print(f"stq: patch file not found: {args.patch1}", file=sys.stderr)
+            sys.exit(1)
+        target = args.patch2
+    else:
+        idx = get_last_applied_patch(series_list)
+        if idx < 0:
+            print("stq: no patches applied", file=sys.stderr)
+            sys.exit(1)
+        target = args.patch1
+
+    target_path = patdir / target
+    if target_path.exists():
+        print(f"stq: patch already exists: {target}", file=sys.stderr)
+        sys.exit(1)
+    shutil.move(patdir / series_list[idx].patchfile, target_path)
+
+    if not series_list[idx].patchname:
+        series_list[idx].patchname = series_list[idx].patchfile
+    series_list[idx].patchfile = target
+
+    write_series(series, series_list)
+
+
+def command_repair(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    if not args.skip_stg:
+        # Fix StGit metadata
+        _ = subprocess.run([conf.stg, "repair"])
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    idx = get_last_applied_patch(series_list) + 1
+
+    patch_list = run_stg_series()
+    if len(patch_list) > 0:
+        print("Refreshing all the applied patches.")
+        with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
+            tmpdir = Path(tmpdirname)
+            # Export the patches to tmpdir
+            res = subprocess.run(
+                [
+                    conf.stg,
+                    "export",
+                    "-d",
+                    tmpdirname,
+                    "--",
+                    f"{patch_list[0][1]}..{patch_list[-1][1]}",
+                ]
+            )
+            if res.returncode:
+                sys.exit(res.returncode)
+
+            for p in patch_list:
+                applied = p[0]
+                patchname = p[1]
+                patchfile, added = update_series(series_list, patchname, idx, applied)
+                print(f"Updating: {patchfile}")
+                if added:
+                    idx += 1
+                shutil.copy(tmpdir / patchname, patdir / patchfile)
+
+            print("Updating: series")
+            write_series(series, series_list)
+
+    print("Updating: status")
+    write_status_from_series(status, series_list)
+
+
+def show_all_guards(series_list: list[SeriesItem]):
+    pos = set()
+    neg = set()
+    for si in series_list:
+        pos |= set(si.positive_guards)
+        neg |= set(si.negative_guards)
+
+    for i in sorted(pos | neg):
+        if i in neg:
+            print(f"-{i}")
+        if i in pos:
+            print(f"+{i}")
+
+
+def command_select(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    if args.series:
+        show_all_guards(series_list)
+        return
+
+    new_guards_list: list[str] = []
+    if not args.none:
+        if args.guard:
+            new_guards_list = args.guard
+        else:
+            # No guards specified. Show current guards.
+            for i in guards_list:
+                print(i)
+            return
+
+    # TODO: Compare guards_list and new_guards_list.
+
+    if args.pop or args.reapply:
+        # TODO: pop
+        raise NotImplementedError()
+
+    write_guards(guards, new_guards_list)
+
+    if args.reapply:
+        # TODO: apply
+        raise NotImplementedError()
+
+
+def command_series(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    for si in series_list:
+        if si.applied == "applied":
+            print("+", f"{COL_APPLIED}{si.patchfile}{COL_OFF}")
+        else:
+            print("-", f"{COL_UNAPPLIED}{si.patchfile}{COL_OFF}")
+
+
+def command_version(args: argparse.Namespace):
+    print(f"stq {VERSION}")
+    res = subprocess.run([conf.stg, "version"])
+    sys.exit(res.returncode)
+
+
+def command_help(args: argparse.Namespace):
+    if args.command:
+        cmd = get_subcommand(args.parser, args.subparsers, args.command)
+        args.parser.parse_args([cmd, "--help"])
+    else:
+        args.parser.print_help()
+
+
+def search_subcommand() -> tuple[int, str]:
+    i = 0
+    while i < len(sys.argv) - 1:
+        i += 1
+        arg = sys.argv[i]
+        if arg.startswith("-"):
+            if arg.startswith("-C="):
+                continue
+            if arg == "-C":
+                i += 1
+                continue
+            if arg in ["-h", "--h", "--he", "--hel", "--help"]:
+                return i, "help"
+        else:
+            return i, arg
+
+    return -1, ""
+
+
+def get_subcommand(
+    parser: argparse.ArgumentParser, subparsers: argparse._SubParsersAction, cmd: str
+) -> str:
+    allcmds = subparsers._name_parser_map.keys()
+
+    # Check exact match
+    if cmd in allcmds:
+        return cmd
+
+    # Check abbreviated commands
+    cmds = [x for x in allcmds if x.startswith(cmd)]
+
+    if len(cmds) == 1:
+        return cmds[0]
+    else:
+        if len(cmds) == 0:
+            print(f'stq: Unknown subcommand: "{cmd}"', file=sys.stderr)
+        else:
+            print(
+                f'stq: Ambiguous subcommand: "{cmd}" (candidates: {sorted(cmds)})',
+                file=sys.stderr,
+            )
+        parser.print_usage(sys.stderr)
+        sys.exit(1)
+
+
+def enable_esc_seq():
+    """Enable ANSI escape sequences
+
+    This is useful on Windows 10 or later. Do nothing on other OSes.
+    """
+    if os.name != "nt":
+        return
+
+    from ctypes import byref, c_uint, windll
+
+    STD_OUTPUT_HANDLE = c_uint(-11)
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x4
+
+    out = windll.kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+    mode = c_uint()
+    windll.kernel32.GetConsoleMode(out, byref(mode))
+    mode.value |= ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    windll.kernel32.SetConsoleMode(out, mode)
+
+
+def main() -> None:
+    global sub_argv
+
+    enable_esc_seq()
+
+    if os.getenv("NO_COLOR", "") != "":
+        # Disable colors
+        global \
+            COL_APPLIED, \
+            COL_UNAPPLIED, \
+            COL_UNGUARDED, \
+            COL_POS_GUARD, \
+            COL_NEG_GUARD, \
+            COL_OFF
+        COL_APPLIED = ""
+        COL_UNAPPLIED = ""
+        COL_UNGUARDED = ""
+        COL_POS_GUARD = ""
+        COL_NEG_GUARD = ""
+        COL_OFF = ""
+
+    parser = argparse.ArgumentParser(
+        description="stq: A Mercurial-Queues-like wrapper for StGit",
+        exit_on_error=False,
+    )
+    subparsers = parser.add_subparsers()
+
+    ## add
+    #parser_add = subparsers.add_parser("add", help="see `add -h`")
+    #parser_add.add_argument("-A", "--all", action="store_true", help="add files")
+    #parser_add.set_defaults(handler=command_add)
+
+    # delete
+    parser_delete = subparsers.add_parser(
+        "delete",
+        aliases=["rm"],
+        help="delete patches",
+        description="Delete patches.",
+    )
+    parser_delete.add_argument("patch", help="patch name(s)", nargs="*")
+    parser_delete.set_defaults(handler=command_delete)
+
+    # fold
+    parser_fold = subparsers.add_parser(
+        "fold",
+        help="fold the named patches into the current patch",
+        description="Fold the named patches into the current patch.",
+    )
+    parser_fold.set_defaults(handler=command_fold)
+
+    # guard
+    parser_guard = subparsers.add_parser(
+        "guard",
+        help="set or print guards for a patch",
+        description="Set or print guards for a patch.",
+    )
+    parser_guard.add_argument(
+        "-l", "--list", action="store_true", help="list all patches and guards"
+    )
+    parser_guard.add_argument(
+        "-n", "--none", action="store_true", help="drop all guards"
+    )
+    parser_guard.add_argument("patch", help="patch to apply guards", nargs="?")
+    parser_guard.add_argument(
+        "guard", help="name of guard(s). [+GUARD]... [-GUARD]...", nargs="*"
+    )
+    parser_guard.set_defaults(handler=command_guard)
+
+    # import
+    parser_import = subparsers.add_parser(
+        "import", help="import a patch file", description="Import a patch file."
+    )
+    parser_import.add_argument(
+        "patch",
+        nargs="+",
+        type=Path,
+        help="patch file(s) to import",
+    )
+    parser_import.set_defaults(handler=command_import)
+
+    # init
+    parser_init = subparsers.add_parser(
+        "init",
+        help="initialize the stq directory",
+        description="Initialize the stq directory.",
+    )
+    parser_init.set_defaults(handler=command_init)
+
+    # mqimport
+    parser_mqimport = subparsers.add_parser(
+        "mqimport",
+        help="import Mercurial Queues patches",
+        description="Import Mercurial Queue patches.",
+    )
+    parser_mqimport.add_argument(
+        "mq_dir",
+        type=Path,
+        help="import all the MQ patches from MQ_DIR directory (E.g.: './hgrepo/.hg/patches/')",
+    )
+    parser_mqimport.set_defaults(handler=command_mqimport)
+
+    # new
+    parser_new = subparsers.add_parser(
+        "new",
+        help="create a new, empty patch",
+        description="Create a new, empty patch.",
+    )
+    parser_new.add_argument("name", help="name of the new patch")
+    parser_new.add_argument("-m", "--message", help="use text as commit message")
+    parser_new.set_defaults(handler=command_new)
+
+    # pop
+    parser_pop = subparsers.add_parser(
+        "pop",
+        help="pop the current patch off the stack",
+        description="Pop the current patch off the stack.",
+    )
+    parser_pop.add_argument("-a", "--all", action="store_true", help="pop all patches")
+    parser_pop.set_defaults(handler=command_pop)
+
+    # pull
+    parser_pull = subparsers.add_parser(
+        "pull",
+        help="pull changes from a remote repository",
+        description="Pull changes from a remote repository.",
+    )
+    parser_pull.add_argument(
+        "-n",
+        "--nopush",
+        action="store_true",
+        help="do not push the patches back after pulling",
+    )
+    parser_pull.add_argument(
+        "-m",
+        "--merged",
+        action="store_true",
+        help="check for patches merged upstream",
+    )
+    parser_pull.add_argument("repository", help="repository to pull from", nargs="?")
+    parser_pull.set_defaults(handler=command_pull)
+
+    # push
+    parser_push = subparsers.add_parser(
+        "push",
+        help="push the next patch onto the stack",
+        description="Push the next patch onto the stack.",
+    )
+    parser_push.add_argument(
+        "-a", "--all", action="store_true", help="apply all patches"
+    )
+    parser_push.set_defaults(handler=command_push)
+
+    # qgit
+    parser_qgit = subparsers.add_parser(
+        "qgit",
+        help="run the git command in the patch queue directory",
+        description="Run the git command in the patch queue directory.",
+    )
+    parser_qgit.set_defaults(handler=command_qgit)
+
+    # refresh
+    parser_refresh = subparsers.add_parser(
+        "refresh",
+        help="update the current patch",
+        description="Update the current patch.",
+    )
+    parser_refresh.add_argument(
+        "-e", "--edit", action="store_true", help="invoke editor on commit messages"
+    )
+    parser_refresh.set_defaults(handler=command_refresh)
+
+    # rename
+    parser_rename = subparsers.add_parser(
+        "rename",
+        aliases=["mv"],
+        help="rename a patch",
+        description="Rename a patch. With one argument, renames the current patch to PATCH1. With two arguments, renames PATCH1 to PATCH2.",
+    )
+    parser_rename.add_argument("patch1", help="1st patch file name")
+    parser_rename.add_argument("patch2", help="2nd patch file name", nargs="?")
+    parser_rename.set_defaults(handler=command_rename)
+
+    # repair
+    parser_repair = subparsers.add_parser(
+        "repair",
+        help="fix stq metadata",
+        description="Fix stq metadata. Also fix StGit metadata.",
+    )
+    parser_repair.add_argument(
+        "-s", "--skip-stg", action="store_true", help="skip fixing StGit metadata"
+    )
+    parser_repair.set_defaults(handler=command_repair)
+
+    # select
+    parser_select = subparsers.add_parser(
+        "select",
+        help="set or print guarded patches to push",
+        description="Set or print guarded patches to push.",
+    )
+    parser_select.add_argument(
+        "-n", "--none", action="store_true", help="disable all guards"
+    )
+    parser_select.add_argument(
+        "-s", "--series", action="store_true", help="list all guards in series file"
+    )
+    parser_select.add_argument(
+        "--pop", action="store_true", help="pop to before first guarded applied patch"
+    )
+    parser_select.add_argument(
+        "--reapply", action="store_true", help="pop, then reapply patches"
+    )
+    parser_select.add_argument(
+        "guard",
+        nargs="*",
+        help="guard(s) to be selected",
+    )
+    parser_select.set_defaults(handler=command_select)
+
+    # series
+    parser_series = subparsers.add_parser(
+        "series",
+        help="print the entire series file",
+        description="Print the entire series file.",
+    )
+    parser_series.set_defaults(handler=command_series)
+
+    # version
+    parser_version = subparsers.add_parser(
+        "version",
+        help="show the version",
+        description="Show the version",
+    )
+    parser_version.set_defaults(handler=command_version)
+
+    # help
+    parser_help = subparsers.add_parser(
+        "help", help="show the help of the specified subcommand"
+    )
+    parser_help.add_argument(
+        "command", nargs="?", help="command name which help is shown"
+    )
+    parser_help.set_defaults(handler=command_help, parser=parser, subparsers=subparsers)
+
+    # Common options
+    parser.add_argument("-C", dest="path", type=Path, help="set current directory")
+
+    idx, cmd = search_subcommand()
+    if idx < 0:
+        parser.print_help()
+        sys.exit(0)
+    cmd = get_subcommand(parser, subparsers, cmd)
+    sub_argv = sys.argv[idx + 1 :]
+    args, argv = parser.parse_known_args(sys.argv[1:idx] + [cmd] + sub_argv)
+
+    if args.path:
+        os.chdir(args.path)
+
+    if hasattr(args, "handler"):
+        if args.handler == command_qgit:
+            return args.handler(args, argv)
+
+        if argv:
+            msg = "unrecognized arguments: %s"
+            parser.error(msg % " ".join(argv))
+        return args.handler(args)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
