@@ -330,7 +330,13 @@ def get_ungarded_patch_list(
 def get_stg_commitid(patchname: str) -> str:
     proc = subprocess.Popen(
         # Show only commit ID
-        [conf.stg, "show", "-O", "--no-patch", "-O", "--format=%H", patchname],
+        [
+            conf.stg,
+            "show",
+            "--diff-opts=--no-patch",
+            "--diff-opts=--format=%H",
+            patchname,
+        ],
         encoding="utf-8",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -636,7 +642,7 @@ def command_new(args: argparse.Namespace):
 
     # Run "stg new"
     proc = subprocess.Popen(
-        [conf.stg, "new", "-m", message, "--", args.name],
+        [conf.stg, "new", f"--message={message}", "--", args.name],
         encoding="utf-8",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -817,7 +823,7 @@ def run_stg_import(patchfile: Path, patchname: Optional[str]) -> tuple[bool, str
     if apply_fail:
         # Run "stg new" to prepare an empty patch
         proc = subprocess.Popen(
-            [conf.stg, "new", "-m", "", "--", str(patchfile.name)],
+            [conf.stg, "new", "--message=", "--", str(patchfile.name)],
             encoding="utf-8",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1048,8 +1054,7 @@ def command_refresh(args: argparse.Namespace):
             [
                 conf.stg,
                 "export",
-                "-d",
-                tmpdirname,
+                f"--dir={tmpdirname}",
                 "--",
                 patchname,
             ]
@@ -1131,8 +1136,7 @@ def command_repair(args: argparse.Namespace):
                 [
                     conf.stg,
                     "export",
-                    "-d",
-                    tmpdirname,
+                    f"--dir={tmpdirname}",
                     "--",
                     f"{patch_list[0][1]}..{patch_list[-1][1]}",
                 ]
