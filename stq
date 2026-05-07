@@ -755,7 +755,35 @@ def command_pull(args: argparse.Namespace):
         pass
 
 
-def run_stg_import(patchfile: Path) -> tuple[bool, str]:
+def run_stg_rename(newpatch: str, oldpatch: Optional[str] = None) -> tuple[bool, str]:
+    stgcmd = [conf.stg, "rename", "--"]
+    if oldpatch is not None:
+        stgcmd += [oldpatch]
+    stgcmd += [newpatch]
+
+    proc = subprocess.Popen(
+        stgcmd,
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        print(line, end="")
+        m = re.match(r'Renaming patch "[^"]*" to "(.*)" \.\.\. done', line)
+        if m:
+            return True, m.group(1)
+
+    return False, ""
+
+
+def run_stg_import(patchfile: Path, patchname: Optional[str]) -> tuple[bool, str]:
     proc = subprocess.Popen(
         [conf.stg, "import", "--keep-cr", "--reject", "--", str(patchfile)],
         encoding="utf-8",
@@ -774,13 +802,20 @@ def run_stg_import(patchfile: Path) -> tuple[bool, str]:
         print(line, end="")
         m = re.match(r'  Now at patch "(.*)"', line)
         if m:
-            return True, m.group(1)
+            new_patchname = m.group(1)
+            if patchname and patchname != new_patchname:
+                # Try using patchname defined in series
+                ok, new_patchname2 = run_stg_rename(patchname)
+                if ok:
+                    new_patchname = new_patchname2
+            return True, new_patchname
         m = re.match(r"stg import: Patch does not apply cleanly", line)
         if m:
             apply_fail = True
             break
 
     if apply_fail:
+        # Run "stg new" to prepare an empty patch
         proc = subprocess.Popen(
             [conf.stg, "new", "-m", "", "--", str(patchfile.name)],
             encoding="utf-8",
@@ -923,7 +958,9 @@ def command_push(args: argparse.Namespace):
                 else:
                     apply_cleanly = False
             else:
-                apply_cleanly, si.patchname = run_stg_import(patdir / si.patchfile)
+                apply_cleanly, si.patchname = run_stg_import(
+                    patdir / si.patchfile, si.patchname
+                )
                 si.commitid = ""  # get_stg_commitid(si.patchname)
             status_list += [StatusItem(si.commitid, si.patchname)]  # ty: ignore[invalid-argument-type]
 
@@ -939,21 +976,22 @@ def command_push(args: argparse.Namespace):
     unmodified = False
     apply_cleanly = True
     patch_list = run_stg_series()
+    si = series_list[idx]
     for applied, pat in patch_list:
-        if series_list[idx].patchname == pat or series_list[idx].patchfile == pat:
+        if si.patchname == pat or si.patchfile == pat:
             if not applied:
                 patchname, unmodified = run_stg_push(pat)
                 if patchname:
                     break
     else:
-        apply_cleanly, patchname = run_stg_import(patdir / series_list[idx].patchfile)
+        apply_cleanly, patchname = run_stg_import(patdir / si.patchfile, si.patchname)
 
     if patchname:
-        series_list[idx].patchname = patchname
-        if not unmodified or not series_list[idx].commitid:
+        si.patchname = patchname
+        if not unmodified or not si.commitid:
             commitid = ""  # get_stg_commitid(patchname)
-            series_list[idx].commitid = commitid
-        status_list += [StatusItem(series_list[idx].commitid, patchname)]  # ty: ignore[invalid-argument-type]
+            si.commitid = commitid
+        status_list += [StatusItem(si.commitid, patchname)]
 
     write_series(series, series_list)
     write_status(status, status_list)
