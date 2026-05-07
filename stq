@@ -622,6 +622,30 @@ def command_init(args: argparse.Namespace):
     sys.exit(res.returncode)
 
 
+def run_stg_new(patchname: str, message: str = "") -> str:
+    proc = subprocess.Popen(
+        [conf.stg, "new", f"--message={message}", "--", patchname],
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    new_patchname = ""
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        print(line, end="")
+        m = re.match(r'Now at patch "(.*)"', line)
+        if m:
+            new_patchname = m.group(1)
+
+    return new_patchname
+
+
 def command_new(args: argparse.Namespace):
     patdir = ensure_patchesdir()
 
@@ -641,26 +665,7 @@ def command_new(args: argparse.Namespace):
         message = args.name
 
     # Run "stg new"
-    proc = subprocess.Popen(
-        [conf.stg, "new", f"--message={message}", "--", args.name],
-        encoding="utf-8",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert proc.stdout
-
-    patchname = ""
-    while True:
-        line = proc.stdout.readline()
-        if not line:
-            if proc.poll() is not None:
-                break
-            continue
-        print(line, end="")
-        m = re.match(r'Now at patch "(.*)"', line)
-        if m:
-            patchname = m.group(1)
-
+    patchname = run_stg_new(args.name, message)
     if not patchname:
         sys.exit(1)
 
@@ -822,24 +827,9 @@ def run_stg_import(patchfile: Path, patchname: Optional[str]) -> tuple[bool, str
 
     if apply_fail:
         # Run "stg new" to prepare an empty patch
-        proc = subprocess.Popen(
-            [conf.stg, "new", "--message=", "--", str(patchfile.name)],
-            encoding="utf-8",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        assert proc.stdout
-
-        while True:
-            line = proc.stdout.readline()
-            if not line:
-                if proc.poll() is not None:
-                    break
-                continue
-            print(line, end="")
-            m = re.match(r'Now at patch "(.*)"', line)
-            if m:
-                return False, m.group(1)
+        message = patchfile.name  # TODO: Extract the message from the patch
+        patchname = run_stg_new(patchfile.name, message)
+        return False, patchname
 
     return False, ""
 
