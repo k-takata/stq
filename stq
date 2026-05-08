@@ -1406,6 +1406,13 @@ def main() -> None:
         help="discard patches in StGit",
         description="Discard all the StGit patches in the current directory to make it possible to reapply the patch files in the patches directory.",
     )
+    parser_discard.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        required=True,
+        help="discard all the StGit patches (This option is required for safety.)"
+    )
     parser_discard.set_defaults(handler=command_discard)
 
     # edit
