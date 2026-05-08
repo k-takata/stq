@@ -454,6 +454,25 @@ def command_delete(args: argparse.Namespace):
     write_series(series, series_list)
 
 
+def command_discard(args: argparse.Namespace):
+    _ = ensure_patchesdir()
+
+    print("Popping all patches...")
+    args.all = True
+    command_pop(args)
+
+    patch_list = run_stg_series()
+    if len(patch_list) == 0:
+        print("stq: No patches registered in StGit.")
+        return
+
+    # Run "stg delete"
+    patch_names = [p[1] for p in patch_list]
+    res = subprocess.run([conf.stg, "delete", "--"] + patch_names)
+    if res.returncode:
+        sys.exit(res.returncode)
+
+
 def command_edit(args: argparse.Namespace, argv: list[str]):
     patdir = ensure_patchesdir()
 
@@ -763,7 +782,7 @@ def command_pop(args: argparse.Namespace):
 
 
 def command_pull(args: argparse.Namespace):
-    #patdir = ensure_patchesdir()
+    _ = ensure_patchesdir()
 
     #series = patdir / "series"
     #series_list = read_series(series)
@@ -1085,7 +1104,7 @@ def command_refresh(args: argparse.Namespace):
     if res.returncode:
         sys.exit(res.returncode)
 
-    patchname = series_list[idx].patchname
+    #patchname = series_list[idx].patchname
     commitid = ""  # get_stg_commitid(patchname)
     if commitid:
         status_list[-1].commitid = commitid
@@ -1381,6 +1400,14 @@ def main() -> None:
     parser_delete.add_argument("patch", help="patch name(s)", nargs="*")
     parser_delete.set_defaults(handler=command_delete)
 
+    # discard
+    parser_discard = subparsers.add_parser(
+        "discard",
+        help="discard patches in StGit",
+        description="Discard all the StGit patches in the current directory to make it possible to reapply the patch files in the patches directory.",
+    )
+    parser_discard.set_defaults(handler=command_discard)
+
     # edit
     parser_edit = subparsers.add_parser(
         "edit",
@@ -1533,7 +1560,7 @@ def main() -> None:
     parser_repair = subparsers.add_parser(
         "repair",
         help="fix stq metadata",
-        description="Fix stq metadata. Also fix StGit metadata.",
+        description="Fix stq metadata and update the patch files based on the current StGit status. Also fix StGit metadata.",
     )
     parser_repair.add_argument(
         "-s", "--skip-stg", action="store_true", help="skip fixing StGit metadata"
