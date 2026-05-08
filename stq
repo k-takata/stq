@@ -454,6 +454,34 @@ def command_delete(args: argparse.Namespace):
     write_series(series, series_list)
 
 
+def command_edit(args: argparse.Namespace, argv: list[str]):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    idx = get_last_applied_patch(series_list)
+    if idx < 0:
+        print("stq: no patches applied", file=sys.stderr)
+        sys.exit(1)
+
+    # Run "stg edit"
+    stgcmd = [conf.stg, "edit"] + argv
+    res = subprocess.run(stgcmd)
+    if res.returncode:
+        sys.exit(res.returncode)
+
+    # Update the current patch file
+    refresh_patch(patdir, series_list, idx)
+
+
 def command_fold(args: argparse.Namespace):
     print(args)
     # TODO:
@@ -803,6 +831,9 @@ def run_stg_import(patchfile: Path, patchname: Optional[str]) -> tuple[bool, str
     )
     assert proc.stdout
 
+    if not patchname:
+        patchname = patchfile.name
+
     apply_fail = False
     while True:
         line = proc.stdout.readline()
@@ -814,7 +845,7 @@ def run_stg_import(patchfile: Path, patchname: Optional[str]) -> tuple[bool, str
         m = re.match(r'  Now at patch "(.*)"', line)
         if m:
             new_patchname = m.group(1)
-            if patchname and patchname != new_patchname:
+            if patchname != new_patchname:
                 # Try using patchname defined in series
                 ok, new_patchname2 = run_stg_rename(patchname)
                 if ok:
@@ -999,13 +1030,36 @@ def command_push(args: argparse.Namespace):
 def command_qgit(args: argparse.Namespace, argv: list[str]):
     patdir = ensure_patchesdir()
 
-    gitcmd = [conf.git]
-    gitcmd += ["-C", patdir]
-    gitcmd += argv
-
+    gitcmd = [conf.git, "-C", str(patdir)] + argv
     res = subprocess.run(gitcmd)
     if res.returncode:
         sys.exit(res.returncode)
+
+
+def refresh_patch(patdir: Path, series_list: list[SeriesItem], idx: int):
+    assert idx >= 0
+
+    patchname = series_list[idx].patchname
+    assert patchname
+    patchfile = series_list[idx].patchfile
+    print(f"Updating patch file: {patchfile}")
+
+    with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
+        tmpdir = Path(tmpdirname)
+        # Export the patch to tmpdir
+        res = subprocess.run(
+            [
+                conf.stg,
+                "export",
+                f"--dir={tmpdirname}",
+                "--",
+                patchname,
+            ]
+        )
+        if res.returncode:
+            sys.exit(res.returncode)
+
+        shutil.copy(tmpdir / patchname, patdir / patchfile)
 
 
 def command_refresh(args: argparse.Namespace):
@@ -1026,6 +1080,7 @@ def command_refresh(args: argparse.Namespace):
         print("stq: no patches applied", file=sys.stderr)
         sys.exit(1)
 
+    # Run "stg refresh"
     res = subprocess.run([conf.stg, "refresh"])
     if res.returncode:
         sys.exit(res.returncode)
@@ -1037,22 +1092,8 @@ def command_refresh(args: argparse.Namespace):
 
     write_status(status, status_list)
 
-    with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
-        tmpdir = Path(tmpdirname)
-        # Export the patch to tmpdir
-        res = subprocess.run(
-            [
-                conf.stg,
-                "export",
-                f"--dir={tmpdirname}",
-                "--",
-                patchname,
-            ]
-        )
-        if res.returncode:
-            sys.exit(res.returncode)
-
-        shutil.copy(tmpdir / patchname, patdir / series_list[idx].patchfile)
+    # Update the current patch file
+    refresh_patch(patdir, series_list, idx)
 
 
 def command_rename(args: argparse.Namespace):
@@ -1340,6 +1381,14 @@ def main() -> None:
     parser_delete.add_argument("patch", help="patch name(s)", nargs="*")
     parser_delete.set_defaults(handler=command_delete)
 
+    # edit
+    parser_edit = subparsers.add_parser(
+        "edit",
+        help="edit a patch description or diff",
+        description='Edit a patch description or diff by invoking "stg edit [<args>]".',
+    )
+    parser_edit.set_defaults(handler=command_edit)
+
     # fold
     parser_fold = subparsers.add_parser(
         "fold",
@@ -1556,7 +1605,7 @@ def main() -> None:
         os.chdir(args.path)
 
     if hasattr(args, "handler"):
-        if args.handler == command_qgit:
+        if args.handler in [command_edit, command_qgit]:
             return args.handler(args, argv)
 
         if argv:
