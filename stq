@@ -178,7 +178,7 @@ def read_series(series: Path) -> list[SeriesItem]:
                 # Skip comment
                 continue
 
-            patchname = ""
+            patchname = patchfile
             positive_guards: list[str] = []
             negative_guards: list[str] = []
 
@@ -207,7 +207,7 @@ def write_series(series: Path, series_list: list[SeriesItem]) -> None:
     with series.open("w") as f:
         for si in series_list:
             s = si.patchfile
-            if si.patchname:
+            if si.patchname and si.patchname != si.patchfile:
                 s += f" #={si.patchname}"
             if si.positive_guards:
                 for i in si.positive_guards:
