@@ -409,11 +409,6 @@ def write_status_from_series(status: Path, series_list: list[SeriesItem]) -> Non
                 print(f"{si.commitid}:{patchname}", file=f)
 
 
-#def command_add(args: argparse.Namespace):
-#    print(args)
-#    raise NotImplementedError()
-
-
 def command_delete(args: argparse.Namespace):
     patdir = ensure_patchesdir()
 
@@ -1384,11 +1379,6 @@ def main() -> None:
         exit_on_error=False,
     )
     subparsers = parser.add_subparsers()
-
-    ## add
-    #parser_add = subparsers.add_parser("add", help="see `add -h`")
-    #parser_add.add_argument("-A", "--all", action="store_true", help="add files")
-    #parser_add.set_defaults(handler=command_add)
 
     # delete
     parser_delete = subparsers.add_parser(
