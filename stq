@@ -454,6 +454,7 @@ def command_discard(args: argparse.Namespace):
 
     print("Popping all patches...")
     args.all = True
+    args.patch = None
     command_pop(args)
 
     patch_list = run_stg_series()
