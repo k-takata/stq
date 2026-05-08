@@ -765,6 +765,9 @@ def command_pop(args: argparse.Namespace):
         print("stq: no patches applied", file=sys.stderr)
         sys.exit(1)
 
+    if args.patch:
+        raise NotImplementedError
+
     ret = run_stg_pop(args.all)
     if ret != 0:
         sys.exit(ret)
@@ -1013,6 +1016,9 @@ def command_push(args: argparse.Namespace):
         write_series(series, series_list)
         write_status(status, status_list)
         return
+
+    if args.patch:
+        raise NotImplementedError
 
     unmodified = False
     apply_cleanly = True
@@ -1401,7 +1407,7 @@ def main() -> None:
         "--all",
         action="store_true",
         required=True,
-        help="discard all the StGit patches (This option is required for safety.)"
+        help="discard all the StGit patches (This option is required for safety.)",
     )
     parser_discard.set_defaults(handler=command_discard)
 
@@ -1489,6 +1495,7 @@ def main() -> None:
         description="Pop the current patch off the stack.",
     )
     parser_pop.add_argument("-a", "--all", action="store_true", help="pop all patches")
+    parser_pop.add_argument("patch", help="patch name", nargs="?")
     parser_pop.set_defaults(handler=command_pop)
 
     # pull
@@ -1521,6 +1528,12 @@ def main() -> None:
     parser_push.add_argument(
         "-a", "--all", action="store_true", help="apply all patches"
     )
+    parser_push.add_argument(
+        "--move",
+        action="store_true",
+        help="reorder patch series and apply only the patch",
+    )
+    parser_push.add_argument("patch", help="patch name", nargs="?")
     parser_push.set_defaults(handler=command_push)
 
     # qgit
