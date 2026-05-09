@@ -1313,14 +1313,19 @@ def command_select(args: argparse.Namespace):
 
     # TODO: Compare guards_list and new_guards_list.
 
+    patchname = ""
     if args.pop or args.reapply:
+        if args.reapply:
+            i = get_last_applied_patch(series_list)
+            if i >= 0:
+                patchname = series_list[i].patchname
         pop_patches(popall=True)
 
     write_guards(guards, new_guards_list)
 
     if args.reapply:
-        # TODO: apply
-        raise NotImplementedError()
+        if patchname:
+            push_patches(patchname=patchname)
 
 
 def command_series(args: argparse.Namespace):
