@@ -982,7 +982,11 @@ def get_first_unapplied_patch(
     return -1
 
 
-def command_push(args: argparse.Namespace):
+def push_patches(
+    pushall: Optional[bool] = None,
+    number: Optional[int] = None,
+    patchname: Optional[str] = None,
+):
     patdir = ensure_patchesdir()
 
     series = patdir / "series"
@@ -995,110 +999,99 @@ def command_push(args: argparse.Namespace):
     update_series_by_guards(series_list, guards_list)
     update_series_by_status(series_list, status_list)
 
-    idx = get_next_ungarded_patch(series_list)
-    if idx < 0:
+    filtered_list = get_ungarded_patch_list(series_list)
+    if not filtered_list:
         print("stq: patch series already fully applied.", file=sys.stderr)
         sys.exit(1)
 
-    if args.all:
-        # Classify the patches:
-        #  1. Not applied yet, already in stg series
-        #  2. Not applied yet, not in stg series
-        filtered_list = get_ungarded_patch_list(series_list)
-        patch_list = run_stg_series("unapplied")
-
-        if len(patch_list) > 0:
-            patchname_list: list[str] = []
-            new_patch_list: list[StgSeriesItem] = []
-            new_filtered_list: list[SeriesItem] = []
-            j = -1
+    if not pushall:
+        if patchname:
             for i, si in enumerate(filtered_list):
-                while True:
-                    j += 1
-                    if j >= len(patch_list):
-                        new_filtered_list += [filtered_list[i]]
-                        break
-                    if (
-                        si.patchname == patch_list[j].patchname
-                        or si.patchfile == patch_list[j].patchname
-                    ):
-                        patchname_list += [patch_list[j].patchname]
-                        break
-                    else:
-                        new_patch_list += [patch_list[j]]
-            patch_list = new_patch_list
-
-            ok, ret = run_stg_push_multi(patchname_list)
-
-            for si, r in zip(filtered_list, ret):
-                patchname, unmodified = r
-                if not si.commitid or not unmodified:
-                    si.commitid = ""  # get_stg_commitid(patchname)
-                status_list += [StatusItem(si.commitid, patchname)]
-            if not ok:
-                write_series(series, series_list)
-                write_status(status, status_list)
-                sys.exit(1)
-
-            filtered_list = new_filtered_list
-
-        for si in filtered_list:
-            print(si.patchfile)
-            patchname = ""
-            for p in patch_list:
-                if si.patchname == p.patchname or si.patchfile == p.patchname:
-                    patchname = p.patchname
+                if si.patchfile == patchname or si.patchname:
+                    number = i + 1
                     break
-            if patchname:
-                si.patchname, unmodified = run_stg_push(patchname)
-                if si.patchname:
-                    apply_cleanly = True
-                else:
-                    apply_cleanly = False
             else:
-                apply_cleanly, si.patchname = run_stg_import(
-                    patdir / si.patchfile, si.patchname
-                )
-                si.commitid = ""  # get_stg_commitid(si.patchname)
-            status_list += [StatusItem(si.commitid, si.patchname)]  # ty: ignore[invalid-argument-type]
-
-            if not apply_cleanly:
-                write_series(series, series_list)
-                write_status(status, status_list)
+                print(f"stq: Patch not found: {patchname}")
                 sys.exit(1)
+        elif number is None:
+            number = 1
 
-        write_series(series, series_list)
-        write_status(status, status_list)
-        return
+        del filtered_list[number:]
 
-    if args.patch:
-        raise NotImplementedError
+    # Classify the patches:
+    #  1. Not applied yet, already in stg series
+    #  2. Not applied yet, not in stg series
 
-    unmodified = False
-    apply_cleanly = True
-    patch_list = run_stg_series()
-    si = series_list[idx]
-    for p in patch_list:
-        if si.patchname == p.patchname or si.patchfile == p.patchname:
-            if not p.applied:
-                patchname, unmodified = run_stg_push(p.patchname)
-                if patchname:
+    patch_list = run_stg_series("unapplied")
+
+    if len(patch_list) > 0:
+        # There are patches already in stg series
+        patchname_list: list[str] = []
+        new_patch_list: list[StgSeriesItem] = []
+        new_filtered_list: list[SeriesItem] = []
+        j = -1
+        for i, si in enumerate(filtered_list):
+            while True:
+                j += 1
+                if j >= len(patch_list):
+                    new_filtered_list += [filtered_list[i]]
                     break
-    else:
-        apply_cleanly, patchname = run_stg_import(patdir / si.patchfile, si.patchname)
+                if (
+                    si.patchname == patch_list[j].patchname
+                    or si.patchfile == patch_list[j].patchname
+                ):
+                    patchname_list += [patch_list[j].patchname]
+                    break
+                else:
+                    new_patch_list += [patch_list[j]]
+        patch_list = new_patch_list
 
-    if patchname:
-        si.patchname = patchname
-        if not unmodified or not si.commitid:
-            commitid = ""  # get_stg_commitid(patchname)
-            si.commitid = commitid
-        status_list += [StatusItem(si.commitid, patchname)]
+        ok, ret = run_stg_push_multi(patchname_list)
+
+        for si, r in zip(filtered_list, ret):
+            patchname, unmodified = r
+            if not si.commitid or not unmodified:
+                si.commitid = ""  # get_stg_commitid(patchname)
+            status_list += [StatusItem(si.commitid, patchname)]
+        if not ok:
+            write_series(series, series_list)
+            write_status(status, status_list)
+            sys.exit(1)
+
+        filtered_list = new_filtered_list
+
+    # Push remaining patches
+    for si in filtered_list:
+        print(si.patchfile)
+        patchname = ""
+        for p in patch_list:
+            if si.patchname == p.patchname or si.patchfile == p.patchname:
+                patchname = p.patchname
+                break
+        if patchname:
+            si.patchname, unmodified = run_stg_push(patchname)
+            if si.patchname:
+                apply_cleanly = True
+            else:
+                apply_cleanly = False
+        else:
+            apply_cleanly, si.patchname = run_stg_import(
+                patdir / si.patchfile, si.patchname
+            )
+            si.commitid = ""  # get_stg_commitid(si.patchname)
+        status_list += [StatusItem(si.commitid, si.patchname)]  # ty: ignore[invalid-argument-type]
+
+        if not apply_cleanly:
+            write_series(series, series_list)
+            write_status(status, status_list)
+            sys.exit(1)
 
     write_series(series, series_list)
     write_status(status, status_list)
 
-    if not apply_cleanly:
-        sys.exit(1)
+
+def command_push(args: argparse.Namespace):
+    push_patches(args.all, args.number, args.patch)
 
 
 def command_qgit(args: argparse.Namespace, argv: list[str]):
