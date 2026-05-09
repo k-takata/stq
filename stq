@@ -474,10 +474,7 @@ def command_discard(args: argparse.Namespace):
     _ = ensure_patchesdir()
 
     print("Popping all patches...")
-    args.all = True
-    args.patch = None
-    args.number = None
-    command_pop(args)
+    pop_patches(popall=True)
 
     patch_list = run_stg_series()
     if len(patch_list) == 0:
@@ -769,7 +766,11 @@ def get_pop_number(series_list: list[SeriesItem], patchname: str) -> int:
     return n
 
 
-def command_pop(args: argparse.Namespace):
+def pop_patches(
+    popall: Optional[bool] = None,
+    number: Optional[int] = None,
+    patchname: Optional[str] = None,
+):
     patdir = ensure_patchesdir()
 
     series = patdir / "series"
@@ -787,25 +788,30 @@ def command_pop(args: argparse.Namespace):
         print("stq: no patches applied", file=sys.stderr)
         sys.exit(1)
 
-    number = 1
-    if args.patch:
-        number = get_pop_number(series_list, args.patch)
+    if patchname:
+        number = get_pop_number(series_list, patchname)
         if number < 0:
-            print(f"stq: Patch not found: {args.patch}")
+            print(f"stq: Patch not found: {patchname}")
             sys.exit(1)
 
-    if args.number:
-        number = args.number
+    if number is None:
+        number = 1
+    if popall is None:
+        popall = False
 
-    ret = run_stg_pop(args.all, number)
+    ret = run_stg_pop(popall, number)
     if ret != 0:
         sys.exit(ret)
 
-    if args.all:
+    if popall:
         status_list.clear()
     else:
         del status_list[-number:]
     write_status(status, status_list)
+
+
+def command_pop(args: argparse.Namespace):
+    pop_patches(args.all, args.number, args.patch)
 
 
 def command_pull(args: argparse.Namespace):
@@ -823,6 +829,7 @@ def command_pull(args: argparse.Namespace):
 
     old_patch_list: list[StgSeriesItem] = []
     if args.merged:
+        # Get current patch list before running "stg pull"
         old_patch_list = run_stg_series()
 
     # Run "stg pull"
@@ -1299,8 +1306,7 @@ def command_select(args: argparse.Namespace):
     # TODO: Compare guards_list and new_guards_list.
 
     if args.pop or args.reapply:
-        # TODO: pop
-        raise NotImplementedError()
+        pop_patches(popall=True)
 
     write_guards(guards, new_guards_list)
 
@@ -1590,7 +1596,9 @@ def main() -> None:
         action="store_true",
         help="reorder patch series and apply only the patch",
     )
-    parser_push.add_argument("patch", help="patch name", nargs="?")
+    parser_push.add_argument(
+        "patch", help="push patches until the specified patch", nargs="?"
+    )
     parser_push.set_defaults(handler=command_push)
 
     # qgit
@@ -1689,6 +1697,9 @@ def main() -> None:
 
     # Common options
     parser.add_argument("-C", dest="path", type=Path, help="set current directory")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="enable additional output"
+    )
 
     idx, cmd = search_subcommand()
     if idx < 0:
