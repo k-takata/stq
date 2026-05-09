@@ -805,6 +805,7 @@ def command_pull(args: argparse.Namespace):
     # Update metadata
     # TODO: Use a better way
     args.skip_stg = True
+    args.skip_patch = True
     command_repair(args)
 
     if args.merged:
@@ -1180,30 +1181,33 @@ def command_repair(args: argparse.Namespace):
 
     patch_list = run_stg_series()
     if len(patch_list) > 0:
-        print("Refreshing all the applied patches.")
+        if not args.skip_patch:
+            print("Refreshing all the applied patches.")
         with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
             tmpdir = Path(tmpdirname)
-            # Export the patches to tmpdir
-            res = subprocess.run(
-                [
-                    conf.stg,
-                    "export",
-                    f"--dir={tmpdirname}",
-                    "--",
-                    f"{patch_list[0][1]}..{patch_list[-1][1]}",
-                ]
-            )
-            if res.returncode:
-                sys.exit(res.returncode)
+            if not args.skip_patch:
+                # Export the patches to tmpdir
+                res = subprocess.run(
+                    [
+                        conf.stg,
+                        "export",
+                        f"--dir={tmpdirname}",
+                        "--",
+                        f"{patch_list[0][1]}..{patch_list[-1][1]}",
+                    ]
+                )
+                if res.returncode:
+                    sys.exit(res.returncode)
 
             for p in patch_list:
                 applied = p[0]
                 patchname = p[1]
                 patchfile, added = update_series(series_list, patchname, idx, applied)
-                print(f"Updating: {patchfile}")
                 if added:
                     idx += 1
-                shutil.copy(tmpdir / patchname, patdir / patchfile)
+                if not args.skip_patch:
+                    print(f"Updating: {patchfile}")
+                    shutil.copy(tmpdir / patchname, patdir / patchfile)
 
             print("Updating: series")
             write_series(series, series_list)
@@ -1575,6 +1579,9 @@ def main() -> None:
     )
     parser_repair.add_argument(
         "-s", "--skip-stg", action="store_true", help="skip fixing StGit metadata"
+    )
+    parser_repair.add_argument(
+        "-p", "--skip-patch", action="store_true", help="skip updating patch files"
     )
     parser_repair.set_defaults(handler=command_repair)
 
