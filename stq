@@ -985,6 +985,7 @@ def get_first_unapplied_patch(
 def push_patches(
     pushall: Optional[bool] = None,
     number: Optional[int] = None,
+    move: Optional[bool] = None,
     patchname: Optional[str] = None,
 ):
     patdir = ensure_patchesdir()
@@ -1005,22 +1006,34 @@ def push_patches(
         sys.exit(1)
 
     if not pushall:
+        idx = -1
         if patchname:
-            for i, si in enumerate(filtered_list):
-                if si.patchfile == patchname or si.patchname:
-                    number = i + 1
-                    break
-            else:
+            idx = get_matching_patch(filtered_list, patchname)
+            if idx < 0:
                 print(f"stq: Patch not found: {patchname}")
                 sys.exit(1)
-        elif number is None:
-            number = 1
 
-        del filtered_list[number:]
+        if move:
+            if idx < 0:
+                print("stq: Patch not specified")
+                sys.exit(1)
+            si = filtered_list[idx]
+            filtered_list = [si]
+            # Reorder series_list
+            series_list.remove(si)
+            i = get_last_applied_patch(series_list) + 1
+            series_list.insert(i, si)
+        else:
+            if idx >= 0:
+                number = idx + 1
+            elif number is None:
+                number = 1
+
+            del filtered_list[number:]
 
     # Classify the patches:
-    #  1. Not applied yet, already in stg series
-    #  2. Not applied yet, not in stg series
+    #  1. Not applied yet, already registered in stg series
+    #  2. Not applied yet, not registered in stg series
 
     patch_list = run_stg_series("unapplied")
 
@@ -1069,12 +1082,14 @@ def push_patches(
                 patchname = p.patchname
                 break
         if patchname:
+            # Already registered
             si.patchname, unmodified = run_stg_push(patchname)
             if si.patchname:
                 apply_cleanly = True
             else:
                 apply_cleanly = False
         else:
+            # Not registered
             apply_cleanly, si.patchname = run_stg_import(
                 patdir / si.patchfile, si.patchname
             )
@@ -1091,7 +1106,7 @@ def push_patches(
 
 
 def command_push(args: argparse.Namespace):
-    push_patches(args.all, args.number, args.patch)
+    push_patches(args.all, args.number, args.move, args.patch)
 
 
 def command_qgit(args: argparse.Namespace, argv: list[str]):
