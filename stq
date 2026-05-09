@@ -476,6 +476,7 @@ def command_discard(args: argparse.Namespace):
     print("Popping all patches...")
     args.all = True
     args.patch = None
+    args.number = None
     command_pop(args)
 
     patch_list = run_stg_series()
@@ -746,27 +747,26 @@ def command_new(args: argparse.Namespace):
     write_status(status, status_list)
 
 
-def run_stg_pop(popall: bool) -> int:
-    cmd = [conf.stg, "pop"]
+def run_stg_pop(popall: bool = False, number: int = 0) -> int:
+    stgcmd = [conf.stg, "pop"]
     if popall:
-        cmd += ["--all"]
-    proc = subprocess.Popen(
-        cmd,
-        encoding="utf-8",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert proc.stdout
+        stgcmd += ["--all"]
+    elif number > 0:
+        stgcmd += [f"--number={str(number)}"]
 
-    while True:
-        line = proc.stdout.readline()
-        if not line:
-            if proc.poll() is not None:
-                break
-            continue
-        print(line, end="")
+    res = subprocess.run(stgcmd)
+    return res.returncode
 
-    return proc.returncode
+
+def get_pop_number(series_list: list[SeriesItem], patchname: str) -> int:
+    n = -1
+    for si in series_list:
+        if si.applied == "applied":
+            if si.patchfile == patchname or si.patchname == patchname:
+                n = 0
+            else:
+                n += 1
+    return n
 
 
 def command_pop(args: argparse.Namespace):
@@ -787,17 +787,24 @@ def command_pop(args: argparse.Namespace):
         print("stq: no patches applied", file=sys.stderr)
         sys.exit(1)
 
+    number = 1
     if args.patch:
-        raise NotImplementedError
+        number = get_pop_number(series_list, args.patch)
+        if number < 0:
+            print(f"stq: Patch not found: {args.patch}")
+            sys.exit(1)
 
-    ret = run_stg_pop(args.all)
+    if args.number:
+        number = args.number
+
+    ret = run_stg_pop(args.all, number)
     if ret != 0:
         sys.exit(ret)
 
     if args.all:
         status_list.clear()
     else:
-        status_list.pop()
+        del status_list[-number:]
     write_status(status, status_list)
 
 
@@ -1537,7 +1544,12 @@ def main() -> None:
         description="Pop the current patch off the stack.",
     )
     parser_pop.add_argument("-a", "--all", action="store_true", help="pop all patches")
-    parser_pop.add_argument("patch", help="patch name", nargs="?")
+    parser_pop.add_argument(
+        "-n", "--number", type=int, help="pop the specified number of patches"
+    )
+    parser_pop.add_argument(
+        "patch", help="pop patches until the specified patch", nargs="?"
+    )
     parser_pop.set_defaults(handler=command_pop)
 
     # pull
@@ -1569,6 +1581,9 @@ def main() -> None:
     )
     parser_push.add_argument(
         "-a", "--all", action="store_true", help="apply all patches"
+    )
+    parser_push.add_argument(
+        "-n", "--number", type=int, help="push the specified number of patches"
     )
     parser_push.add_argument(
         "--move",
