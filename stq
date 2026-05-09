@@ -293,6 +293,17 @@ def update_series_by_status(
         si.applied = applied
 
 
+def update_series_by_stg_series(
+    series_list: list[SeriesItem],
+    patch_list: list[StgSeriesItem],
+):
+    idx = get_last_applied_patch(series_list) + 1
+    for p in patch_list:
+        _, added = update_series(series_list, p.patchname, idx, p.applied)
+        if added:
+            idx += 1
+
+
 def get_matching_patch(series_list: list[SeriesItem], patch: str) -> int:
     for i, si in enumerate(series_list):
         if si.patchfile == patch or si.patchname == patch:
@@ -791,14 +802,21 @@ def command_pop(args: argparse.Namespace):
 
 
 def command_pull(args: argparse.Namespace):
-    _ = ensure_patchesdir()
+    patdir = ensure_patchesdir()
 
-    #series = patdir / "series"
-    #series_list = read_series(series)
-    #status = patdir / "status"
-    #status_list = read_status(status)
-    #guards = patdir / "guards"
-    #guards_list = read_guards(guards)
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    old_patch_list: list[StgSeriesItem] = []
+    if args.merged:
+        old_patch_list = run_stg_series()
 
     # Run "stg pull"
     stgcmd = [conf.stg, "pull"]
@@ -813,14 +831,24 @@ def command_pull(args: argparse.Namespace):
         sys.exit(res.returncode)
 
     # Update metadata
-    # TODO: Use a better way
-    args.skip_stg = True
-    args.skip_patch = True
-    command_repair(args)
+    for si in series_list:
+        si.applied = "unapplied"
+    patch_list = run_stg_series()
+    update_series_by_stg_series(series_list, patch_list)
 
-    if args.merged:
-        # TODO: Remove merged patches
-        pass
+    if old_patch_list:
+        # Remove merged patches
+        remove_list: list[str] = []
+        for o in old_patch_list:
+            for p in patch_list:
+                if o.patchname == p.patchname:
+                    break
+            else:
+                remove_list += [o.patchname]
+        series_list = [si for si in series_list if si.patchname not in remove_list]
+
+    write_series(series, series_list)
+    write_status_from_series(status, series_list)
 
 
 def run_stg_rename(newpatch: str, oldpatch: Optional[str] = None) -> tuple[bool, str]:
@@ -1187,12 +1215,10 @@ def command_repair(args: argparse.Namespace):
     update_series_by_guards(series_list, guards_list)
     update_series_by_status(series_list, status_list)
 
-    idx = get_last_applied_patch(series_list) + 1
-
     patch_list = run_stg_series()
     if len(patch_list) > 0:
         if not args.skip_patch:
-            print("Refreshing all the applied patches.")
+            print("Refreshing all the registered patches.")
         with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
             tmpdir = Path(tmpdirname)
             if not args.skip_patch:
@@ -1209,15 +1235,16 @@ def command_repair(args: argparse.Namespace):
                 if res.returncode:
                     sys.exit(res.returncode)
 
+            idx = get_last_applied_patch(series_list) + 1
             for p in patch_list:
-                applied = p.applied
-                patchname = p.patchname
-                patchfile, added = update_series(series_list, patchname, idx, applied)
+                patchfile, added = update_series(
+                    series_list, p.patchname, idx, p.applied
+                )
                 if added:
                     idx += 1
                 if not args.skip_patch:
                     print(f"Updating: {patchfile}")
-                    shutil.copy(tmpdir / patchname, patdir / patchfile)
+                    shutil.copy(tmpdir / p.patchname, patdir / patchfile)
 
             print("Updating: series")
             write_series(series, series_list)
