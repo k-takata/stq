@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 sub_argv: Optional[list[str]] = None
 
 # Color definitions
