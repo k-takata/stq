@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Optional
 
 VERSION = "0.2.0"
-sub_argv: Optional[list[str]] = None
 
 # Color definitions
 COLOR_BLACK = "\x1b[30m"
@@ -38,6 +37,7 @@ COL_OFF = COLOR_RESET
 
 class Configurations:
     def __init__(self):
+        # TODO: Load settings from a setting file
         self.stg = "stg"
         self.git = "git"
 
@@ -428,6 +428,23 @@ def write_status_from_series(status: Path, series_list: list[SeriesItem]) -> Non
                 print(f"{si.commitid}:{patchname}", file=f)
 
 
+def command_clone(args: argparse.Namespace):
+    # Run "stg clone"
+    res = subprocess.run([conf.stg, "clone", args.repository, args.dir])
+    if res.returncode:
+        sys.exit(res.returncode)
+
+    if args.patches:
+        # Run "git clone" for patdir
+        res = subprocess.run(
+            [conf.git, "clone", args.patches, f"{args.dir}/.git/patches"]
+        )
+        if res.returncode:
+            sys.exit(res.returncode)
+    else:
+        init_stq(skip_stg=True)
+
+
 def command_delete(args: argparse.Namespace):
     patdir = ensure_patchesdir()
 
@@ -722,12 +739,9 @@ def command_mqimport(args: argparse.Namespace):
         shutil.copy(guards, patdir)
 
 
-def command_init(args: argparse.Namespace):
+def init_stq(skip_stg: Optional[bool]):
     # Create .git/patches directory
     patdir = ensure_patchesdir(create=True)
-
-    # Run "stg init"
-    res = subprocess.run([conf.stg, "init"])
 
     # Create .gitignore
     gitign = patdir / ".gitignore"
@@ -736,7 +750,15 @@ def command_init(args: argparse.Namespace):
             print("guards", file=f)
             print("status", file=f)
 
-    sys.exit(res.returncode)
+    if not skip_stg:
+        # Run "stg init"
+        res = subprocess.run([conf.stg, "init"])
+        if res.returncode:
+            sys.exit(res.returncode)
+
+
+def command_init(args: argparse.Namespace):
+    init_stq(args.skip_stg)
 
 
 def run_stg_new(patchname: str, message: str = "") -> str:
@@ -1396,9 +1418,8 @@ def command_select(args: argparse.Namespace):
 
     write_guards(guards, new_guards_list)
 
-    if args.reapply:
-        if patchname:
-            push_patches(patchname=patchname)
+    if args.reapply and patchname:
+        push_patches(patchname=patchname)
 
 
 def command_series(args: argparse.Namespace):
@@ -1501,8 +1522,6 @@ def enable_esc_seq():
 
 
 def main() -> None:
-    global sub_argv
-
     enable_esc_seq()
 
     if os.getenv("NO_COLOR", "") != "":
@@ -1526,6 +1545,21 @@ def main() -> None:
         exit_on_error=False,
     )
     subparsers = parser.add_subparsers()
+
+    # clone
+    parser_clone = subparsers.add_parser(
+        "clone",
+        help="make a local clone of a remote repository",
+        description="Make a local clone of a remote repository.",
+    )
+    parser_clone.add_argument("repository", help="remote repository to clone")
+    parser_clone.add_argument("dir", help="local directory")
+    parser_clone.add_argument(
+        "-p",
+        "--patches",
+        help="patch repository to clone",
+    )
+    parser_clone.set_defaults(handler=command_clone)
 
     # delete
     parser_delete = subparsers.add_parser(
@@ -1607,6 +1641,9 @@ def main() -> None:
         "init",
         help="initialize the stq directory",
         description="Initialize the stq directory.",
+    )
+    parser_init.add_argument(
+        "-s", "--skip-stg", action="store_true", help="skip initializing StGit metadata"
     )
     parser_init.set_defaults(handler=command_init)
 
