@@ -1264,17 +1264,33 @@ def command_rename(args: argparse.Namespace):
             sys.exit(1)
         target = args.patch1
 
+    # Rename patch file
     target_path = patdir / target
     if target_path.exists():
         print(f"stq: Patch already exists: {target}", file=sys.stderr)
         sys.exit(1)
     shutil.move(patdir / series_list[idx].patchfile, target_path)
 
+    # Rename stg patchname if registered
+    old_patchname = ""
+    if series_list[idx].applied == "applied":
+        old_patchname = series_list[idx].patchname
+    else:
+        patch_list = run_stg_series()
+        j = get_matching_patch_in_stg_series(patch_list, series_list[idx].patchname)
+        if j >= 0:
+            old_patchname = patch_list[j].patchname
+    if old_patchname:
+        ok, patchname = run_stg_rename(target, old_patchname)
+        if ok:
+            series_list[idx].patchname = patchname
+
     if not series_list[idx].patchname:
         series_list[idx].patchname = series_list[idx].patchfile
     series_list[idx].patchfile = target
 
     write_series(series, series_list)
+    write_status_from_series(status, series_list)
 
 
 def command_repair(args: argparse.Namespace):
