@@ -538,7 +538,7 @@ def command_fold(args: argparse.Namespace):
 
     idx = get_last_applied_patch(series_list)
     if idx < 0:
-        print("stq: no patches applied", file=sys.stderr)
+        print("stq: No patches applied", file=sys.stderr)
         sys.exit(1)
 
     patch_list = run_stg_series("unapplied")
@@ -546,7 +546,7 @@ def command_fold(args: argparse.Namespace):
     for patchname in args.patch:
         idx = get_matching_patch(series_list, patchname)
         if idx < 0:
-            print(f"stq: Patch not found: {patchname}")
+            print(f"stq: Patch not found: {patchname}", file=sys.stderr)
             sys.exit(1)
         si = series_list[idx]
         patchpath = patdir / si.patchfile
@@ -627,12 +627,12 @@ def command_guard(args: argparse.Namespace):
     if patch:
         idx = get_matching_patch(series_list, patch)
         if idx < 0:
-            print(f"stq: no patch named {patch}", file=sys.stderr)
+            print(f"stq: No patch named {patch}", file=sys.stderr)
             sys.exit(1)
     else:
         idx = get_last_applied_patch(series_list)
         if idx < 0:
-            print("stq: no patches applied", file=sys.stderr)
+            print("stq: No patches applied", file=sys.stderr)
             sys.exit(1)
 
     si = series_list[idx]
@@ -836,13 +836,13 @@ def pop_patches(
 
     idx = get_last_applied_patch(series_list)
     if idx < 0:
-        print("stq: no patches applied", file=sys.stderr)
+        print("stq: No patches applied", file=sys.stderr)
         sys.exit(1)
 
     if patchname:
         number = get_pop_number(series_list, patchname)
         if number < 0:
-            print(f"stq: Patch not found: {patchname}")
+            print(f"stq: Patch not found: {patchname}", file=sys.stderr)
             sys.exit(1)
 
     if number is None:
@@ -1053,7 +1053,7 @@ def push_patches(
 
     filtered_list = get_ungarded_patch_list(series_list)
     if not filtered_list:
-        print("stq: patch series already fully applied.", file=sys.stderr)
+        print("stq: Patch series already fully applied.", file=sys.stderr)
         sys.exit(1)
 
     if not pushall:
@@ -1061,12 +1061,12 @@ def push_patches(
         if patchname:
             idx = get_matching_patch(filtered_list, patchname)
             if idx < 0:
-                print(f"stq: Patch not found: {patchname}")
+                print(f"stq: Patch not found: {patchname}", file=sys.stderr)
                 sys.exit(1)
 
         if move:
             if idx < 0:
-                print("stq: Patch not specified")
+                print("stq: Patch not specified", file=sys.stderr)
                 sys.exit(1)
             si = filtered_list[idx]
             filtered_list = [si]
@@ -1210,7 +1210,7 @@ def command_refresh(args: argparse.Namespace):
 
     idx = get_last_applied_patch(series_list)
     if idx < 0:
-        print("stq: no patches applied", file=sys.stderr)
+        print("stq: No patches applied", file=sys.stderr)
         sys.exit(1)
 
     # Run "stg refresh"
@@ -1248,19 +1248,19 @@ def command_rename(args: argparse.Namespace):
                 idx = i
                 break
         else:
-            print(f"stq: patch file not found: {args.patch1}", file=sys.stderr)
+            print(f"stq: Patch file not found: {args.patch1}", file=sys.stderr)
             sys.exit(1)
         target = args.patch2
     else:
         idx = get_last_applied_patch(series_list)
         if idx < 0:
-            print("stq: no patches applied", file=sys.stderr)
+            print("stq: No patches applied", file=sys.stderr)
             sys.exit(1)
         target = args.patch1
 
     target_path = patdir / target
     if target_path.exists():
-        print(f"stq: patch already exists: {target}", file=sys.stderr)
+        print(f"stq: Patch already exists: {target}", file=sys.stderr)
         sys.exit(1)
     shutil.move(patdir / series_list[idx].patchfile, target_path)
 
