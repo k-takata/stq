@@ -10,8 +10,6 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-#import git  # GitPython
-
 VERSION = "0.1.0"
 sub_argv: Optional[list[str]] = None
 
@@ -516,12 +514,65 @@ def command_edit(args: argparse.Namespace, argv: list[str]):
     refresh_patch(patdir, series_list, idx)
 
 
+def get_matching_patch_in_stg_series(
+    patch_list: list[StgSeriesItem], patch: str
+) -> int:
+    for i, p in enumerate(patch_list):
+        if p.patchname == patch:
+            return i
+    return -1
+
+
 def command_fold(args: argparse.Namespace):
-    print(args)
-    # TODO:
-    #  Run "stg squash"
-    #  Or, run "git apply --intent-to-add"
-    raise NotImplementedError()
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    idx = get_last_applied_patch(series_list)
+    if idx < 0:
+        print("stq: no patches applied", file=sys.stderr)
+        sys.exit(1)
+
+    patch_list = run_stg_series("unapplied")
+
+    for patchname in args.patch:
+        idx = get_matching_patch(series_list, patchname)
+        if idx < 0:
+            print(f"stq: Patch not found: {patchname}")
+            sys.exit(1)
+        si = series_list[idx]
+        patchpath = patdir / si.patchfile
+
+        if get_matching_patch_in_stg_series(patch_list, si.patchname) >= 0:
+            # Run "stg squash"
+            res = subprocess.run([conf.stg, "squash", "--", si.patchname])
+        else:
+            # Run "git apply --index"
+            res = subprocess.run([conf.git, "apply", "--index", str(patchpath)])
+            if res.returncode:
+                sys.exit(res.returncode)
+            # Run "stg refresh"
+            res = subprocess.run([conf.stg, "refresh"])
+
+        if res.returncode:
+            sys.exit(res.returncode)
+
+        series_list.remove(si)
+        if not args.keep:
+            patchpath.unlink()
+
+    write_series(series, series_list)
+
+    # Update the current patch file
+    refresh_patch(patdir, series_list, idx)
 
 
 def show_guard_status(si: SeriesItem):
@@ -1493,6 +1544,10 @@ def main() -> None:
         help="fold the named patches into the current patch",
         description="Fold the named patches into the current patch.",
     )
+    parser_fold.add_argument(
+        "-k", "--keep", action="store_true", help="keep folded patch files"
+    )
+    parser_fold.add_argument("patch", help="patch(es) to be folded", nargs="+")
     parser_fold.set_defaults(handler=command_fold)
 
     # guard
