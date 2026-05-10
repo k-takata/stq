@@ -201,7 +201,7 @@ def read_series(series: Path) -> list[SeriesItem]:
                 elif t == "#-":
                     negative_guards += [name]
                 else:
-                    # TODO: print error
+                    # Ignore other (special) comments
                     pass
 
             series_list += [
@@ -666,16 +666,20 @@ def import_patches(patches: list[Path]) -> None:
 
     series = patdir / "series"
     series_list = read_series(series)
-    #status = patdir / "status"
-    #status_list = read_status(status)
-    #guards = patdir / "guards"
-    #guards_list = read_guards(guards)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
 
-    # TODO: check patch status
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
 
     added_patches: list[SeriesItem] = []
     for patch in patches:
         print(f"stq: Importing {patch}")
+        if get_matching_patch(series_list, patch.name) >= 0:
+            print(f"stq: Same patch name already exists: {patch.name}", file=sys.stderr)
+            sys.exit(1)
         shutil.copy(patch, patdir)
         added_patches += [SeriesItem(patch.name, "", [], [])]
 
@@ -1218,12 +1222,14 @@ def command_refresh(args: argparse.Namespace):
     if res.returncode:
         sys.exit(res.returncode)
 
-    #patchname = series_list[idx].patchname
-    commitid = ""  # get_stg_commitid(patchname)
-    if commitid:
-        status_list[-1].commitid = commitid
+    if False:
+        # Update commitid (disabled for now)
+        patchname = series_list[idx].patchname
+        commitid = get_stg_commitid(patchname)
+        if commitid:
+            status_list[-1].commitid = commitid
 
-    write_status(status, status_list)
+        write_status(status, status_list)
 
     # Update the current patch file
     refresh_patch(patdir, series_list, idx)
