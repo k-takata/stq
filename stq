@@ -498,12 +498,19 @@ def command_delete(args: argparse.Namespace):
 
     # Run "stg delete"
     if args.top:
-        res = subprocess.run([conf.stg, "delete", "--top"])
+        returncode = subprocess.run([conf.stg, "delete", "--top"]).returncode
     else:
-        patch_names = [si.patchname for si in remove_list]
-        res = subprocess.run([conf.stg, "delete", "--"] + patch_names)
-    if res.returncode:
-        sys.exit(res.returncode)
+        patch_list = run_stg_series()
+        patch_names = [
+            si.patchname for si in remove_list
+            if get_matching_patch_in_stg_series(patch_list, si.patchname) >= 0
+        ]
+        if patch_names:
+            returncode = subprocess.run([conf.stg, "delete", "--"] + patch_names).returncode
+        else:
+            returncode = 0
+    if returncode:
+        sys.exit(returncode)
 
     for si in remove_list:
         if not args.keep:
