@@ -1352,8 +1352,8 @@ def command_repair(args: argparse.Namespace):
             for p in patch_list:
                 j = get_matching_patch(series_list, p.patchname)
                 if j >= 0:
-                    print(f"Updating: {patchfile}")
                     patchfile = series_list[j].patchfile
+                    print(f"Updating: {patchfile}")
                     shutil.copy(tmpdir / p.patchname, patdir / patchfile)
 
     print("Updating: series")
