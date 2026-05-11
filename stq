@@ -518,7 +518,7 @@ def command_discard(args: argparse.Namespace):
     _ = ensure_patchesdir()
 
     print("Popping all patches...")
-    pop_patches(popall=True)
+    pop_patches(popall=True, ignore_nopatches=True)
 
     patch_list = run_stg_series()
     if len(patch_list) == 0:
@@ -526,6 +526,7 @@ def command_discard(args: argparse.Namespace):
         return
 
     # Run "stg delete"
+    print("Deleting all patches from StGit...")
     patch_names = [p.patchname for p in patch_list]
     res = subprocess.run([conf.stg, "delete", "--"] + patch_names)
     if res.returncode:
@@ -876,6 +877,7 @@ def pop_patches(
     popall: Optional[bool] = None,
     number: Optional[int] = None,
     patchname: Optional[str] = None,
+    ignore_nopatches: bool = False,
 ):
     patdir = ensure_patchesdir()
 
@@ -891,6 +893,8 @@ def pop_patches(
 
     idx = get_last_applied_patch(series_list)
     if idx < 0:
+        if ignore_nopatches:
+            return
         print("stq: No patches applied", file=sys.stderr)
         sys.exit(1)
 
