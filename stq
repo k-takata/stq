@@ -904,11 +904,6 @@ def command_pull(args: argparse.Namespace):
     update_series_by_guards(series_list, guards_list)
     update_series_by_status(series_list, status_list)
 
-    old_patch_list: list[StgSeriesItem] = []
-    if args.merged:
-        # Get current patch list before running "stg pull"
-        old_patch_list = run_stg_series()
-
     # Run "stg pull"
     stgcmd = [conf.stg, "pull"]
     if args.nopush:
@@ -926,17 +921,6 @@ def command_pull(args: argparse.Namespace):
         si.applied = "unapplied"
     patch_list = run_stg_series()
     update_series_by_stg_series(series_list, patch_list)
-
-    if old_patch_list:
-        # Remove merged patches
-        remove_list: list[str] = []
-        for o in old_patch_list:
-            for p in patch_list:
-                if o.patchname == p.patchname:
-                    break
-            else:
-                remove_list += [o.patchname]
-        series_list = [si for si in series_list if si.patchname not in remove_list]
 
     write_series(series, series_list)
     write_status_from_series(status, series_list)
