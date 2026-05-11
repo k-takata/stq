@@ -1021,8 +1021,36 @@ def run_stg_import(patchfile: Path, patchname: Optional[str]) -> tuple[bool, str
 
     if apply_fail:
         # Run "stg new" to prepare an empty patch
-        message = patchfile.name  # TODO: Extract the message from the patch
+        message = patchfile.name  # Use patch file name as a temporary message
         patchname = run_stg_new(patchfile.name, message)
+        if patchname:
+            tmpf = tempfile.NamedTemporaryFile(
+                mode="w+", encoding="utf-8", delete=False
+            )
+            # Extract the message from the patch file
+            with patchfile.open("r") as f:
+                for line in f:
+                    if line.startswith("#"):
+                        continue
+                    if (
+                        line.rstrip() == "---"
+                        or line.startswith("--- ")
+                        or line.startswith("diff --git")
+                    ):
+                        break
+                    print(line, file=tmpf, end="")
+
+            # Close the temp file.
+            # This is mandatory on Windows. Otherwise, the file cannot be accessed
+            # from another process.
+            # From Python 3.12, delete=True with delete_on_close=False might be used.
+            tmpf.close()
+
+            # Apply the message
+            _ = subprocess.run([conf.stg, "edit", f"--file={tmpf.name}"])
+
+            os.unlink(tmpf.name)
+
         return False, patchname
 
     return False, ""
