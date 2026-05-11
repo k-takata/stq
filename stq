@@ -1430,8 +1430,13 @@ def command_select(args: argparse.Namespace):
 
     series = patdir / "series"
     series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
     guards = patdir / "guards"
     guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
 
     if args.series:
         show_all_guards(series_list)
@@ -1460,6 +1465,7 @@ def command_select(args: argparse.Namespace):
     write_guards(guards, new_guards_list)
 
     if args.reapply and patchname:
+        # TODO: handle the case that patchname is guarded
         push_patches(patchname=patchname)
 
 
