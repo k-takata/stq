@@ -1747,7 +1747,8 @@ def main() -> None:
     parser_pull.add_argument(
         "-m",
         "--merged",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="check for patches merged upstream",
     )
     parser_pull.add_argument("repository", help="repository to pull from", nargs="?")
