@@ -492,6 +492,8 @@ def command_delete(args: argparse.Namespace):
         sys.exit(res.returncode)
 
     for si in remove_list:
+        if not args.keep:
+            (patdir / si.patchfile).unlink()
         series_list.remove(si)
     write_series(series, series_list)
 
@@ -1558,6 +1560,9 @@ def main() -> None:
         aliases=["rm"],
         help="delete patches",
         description="Delete patches.",
+    )
+    parser_delete.add_argument(
+        "-k", "--keep", action="store_true", help="keep patch file"
     )
     parser_delete.add_argument("patch", help="patch name(s)", nargs="*")
     parser_delete.set_defaults(handler=command_delete)
