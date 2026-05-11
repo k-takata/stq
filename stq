@@ -470,30 +470,46 @@ def command_delete(args: argparse.Namespace):
     update_series_by_status(series_list, status_list)
 
     remove_list: list[SeriesItem] = []
-    for patch in args.patch:
-        for si in series_list:
-            if si.patchfile == patch or si.patchname == patch:
-                # Patch found
-                if si.applied == "applied":
-                    print(
-                        f'stq: Cannot delete applied patch: "{patch}"', file=sys.stderr
-                    )
-                    sys.exit(1)
-                remove_list += [si]
-                break
-        else:
-            print(f'stq: Patch not found: "{patch}"', file=sys.stderr)
+    if args.top:
+        idx = get_last_applied_patch(series_list)
+        if idx < 0:
+            print("stq: No patches appled", file=sys.stderr)
             sys.exit(1)
+        remove_list += [series_list[idx]]
+    else:
+        if not args.patch:
+            print("stq: No patches specified", file=sys.stderr)
+            sys.exit(1)
+        for patch in args.patch:
+            for si in series_list:
+                if si.patchfile == patch or si.patchname == patch:
+                    # Patch found
+                    if si.applied == "applied":
+                        print(
+                            f'stq: Cannot delete applied patch: "{patch}"',
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+                    remove_list += [si]
+                    break
+            else:
+                print(f'stq: Patch not found: "{patch}"', file=sys.stderr)
+                sys.exit(1)
 
     # Run "stg delete"
-    patch_names = [si.patchname for si in remove_list]
-    res = subprocess.run([conf.stg, "delete", "--"] + patch_names)
+    if args.top:
+        res = subprocess.run([conf.stg, "delete", "--top"])
+    else:
+        patch_names = [si.patchname for si in remove_list]
+        res = subprocess.run([conf.stg, "delete", "--"] + patch_names)
     if res.returncode:
         sys.exit(res.returncode)
 
     for si in remove_list:
         if not args.keep:
-            (patdir / si.patchfile).unlink()
+            patch_path = patdir / si.patchfile
+            if patch_path.exists():
+                patch_path.unlink()
         series_list.remove(si)
     write_series(series, series_list)
 
@@ -1563,6 +1579,9 @@ def main() -> None:
     )
     parser_delete.add_argument(
         "-k", "--keep", action="store_true", help="keep patch file"
+    )
+    parser_delete.add_argument(
+        "-t", "--top", action="store_true", help="delete top patch"
     )
     parser_delete.add_argument("patch", help="patch name(s)", nargs="*")
     parser_delete.set_defaults(handler=command_delete)
