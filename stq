@@ -232,6 +232,7 @@ def update_series(
     # Search patchname from series_list
     for si in series_list:
         if si.patchname == patchname or si.patchfile == patchname:
+            # Found. Update it.
             if applied:
                 si.commitid = ""  # get_stg_commitid(patchname)
                 si.applied = "applied"
@@ -295,11 +296,21 @@ def update_series_by_stg_series(
     series_list: list[SeriesItem],
     patch_list: list[StgSeriesItem],
 ):
+    # Add the patches that are registerd in stg series to stq series.
+    # If already added, update it.
     idx = get_last_applied_patch(series_list) + 1
     for p in patch_list:
         _, added = update_series(series_list, p.patchname, idx, p.applied)
         if added:
             idx += 1
+
+    # Update applied status
+    for si in series_list:
+        j = get_matching_patch_in_stg_series(patch_list, si.patchname)
+        if j >= 0 and patch_list[j].applied:
+            si.applied = "applied"
+        else:
+            si.applied = "unapplied"
 
 
 def get_matching_patch(series_list: list[SeriesItem], patch: str) -> int:
@@ -917,8 +928,6 @@ def command_pull(args: argparse.Namespace):
         sys.exit(res.returncode)
 
     # Update metadata
-    for si in series_list:
-        si.applied = "unapplied"
     patch_list = run_stg_series()
     update_series_by_stg_series(series_list, patch_list)
 
@@ -1316,10 +1325,12 @@ def command_repair(args: argparse.Namespace):
     update_series_by_guards(series_list, guards_list)
     update_series_by_status(series_list, status_list)
 
+    # Update metadata
     patch_list = run_stg_series()
-    if len(patch_list) > 0:
-        if not args.skip_patch:
-            print("Refreshing all the registered patches.")
+    update_series_by_stg_series(series_list, patch_list)
+
+    if len(patch_list) > 0 and not args.skip_patch:
+        print("Refreshing all the registered patches.")
         with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
             tmpdir = Path(tmpdirname)
             if not args.skip_patch:
@@ -1336,19 +1347,15 @@ def command_repair(args: argparse.Namespace):
                 if res.returncode:
                     sys.exit(res.returncode)
 
-            idx = get_last_applied_patch(series_list) + 1
             for p in patch_list:
-                patchfile, added = update_series(
-                    series_list, p.patchname, idx, p.applied
-                )
-                if added:
-                    idx += 1
-                if not args.skip_patch:
+                j = get_matching_patch(series_list, p.patchname)
+                if j >= 0:
                     print(f"Updating: {patchfile}")
+                    patchfile = series_list[j].patchfile
                     shutil.copy(tmpdir / p.patchname, patdir / patchfile)
 
-            print("Updating: series")
-            write_series(series, series_list)
+    print("Updating: series")
+    write_series(series, series_list)
 
     print("Updating: status")
     write_status_from_series(status, series_list)
