@@ -862,15 +862,34 @@ def command_new(args: argparse.Namespace):
     write_status(status, status_list)
 
 
-def run_stg_pop(popall: bool = False, number: int = 0) -> int:
+def run_stg_pop(popall: bool = False, number: int = 0) -> tuple[int, str]:
     stgcmd = [conf.stg, "pop"]
     if popall:
         stgcmd += ["--all"]
     elif number > 0:
         stgcmd += [f"--number={str(number)}"]
 
-    res = subprocess.run(stgcmd)
-    return res.returncode
+    proc = subprocess.Popen(
+        stgcmd,
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert proc.stdout
+
+    patchname = ""
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        print(line, end="")
+        m = re.match(r'Now at patch "(.*)"', line)
+        if m:
+            patchname = m.group(1)
+
+    return proc.returncode, patchname
 
 
 def get_pop_number(series_list: list[SeriesItem], patchname: str) -> int:
@@ -919,14 +938,17 @@ def pop_patches(
     if popall is None:
         popall = False
 
-    ret = run_stg_pop(popall, number)
+    ret, new_patchname = run_stg_pop(popall, number)
     if ret != 0:
         sys.exit(ret)
 
-    if popall:
-        status_list.clear()
-    else:
-        del status_list[-number:]
+    last_idx = 0
+    if new_patchname:
+        for i, si in enumerate(status_list):
+            if si.patchname == new_patchname:
+                last_idx = i + 1
+                break
+    del status_list[last_idx:]
     write_status(status, status_list)
 
 
