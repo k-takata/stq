@@ -506,11 +506,14 @@ def command_delete(args: argparse.Namespace):
     else:
         patch_list = run_stg_series()
         patch_names = [
-            si.patchname for si in remove_list
+            si.patchname
+            for si in remove_list
             if get_matching_patch_in_stg_series(patch_list, si.patchname)
         ]
         if patch_names:
-            returncode = subprocess.run([conf.stg, "delete", "--"] + patch_names).returncode
+            returncode = subprocess.run(
+                [conf.stg, "delete", "--"] + patch_names
+            ).returncode
         else:
             returncode = 0
     if returncode:
