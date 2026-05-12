@@ -1101,15 +1101,6 @@ def run_stg_push(patchname: str) -> tuple[str, bool]:
     return res[0]
 
 
-def get_first_unapplied_patch(
-    patch_list: list[tuple[bool, str]], start_idx: int = 0
-) -> int:
-    for i in range(start_idx, len(patch_list)):
-        if not patch_list[i][0]:
-            return i
-    return -1
-
-
 def push_patches(
     pushall: Optional[bool] = None,
     number: Optional[int] = None,
