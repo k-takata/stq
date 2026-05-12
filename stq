@@ -308,15 +308,14 @@ def update_series_by_stg_series(
 
     # Update applied status
     for si in series_list:
-        j = get_matching_patch_in_stg_series(patch_list, si.patchname)
-        if j < 0:
-            si.registered = False
-        else:
+        if p := get_matching_patch_in_stg_series(patch_list, si.patchname):
             si.registered = True
-            if patch_list[j].applied:
+            if p.applied:
                 si.applied = "applied"
             else:
                 si.applied = "unapplied"
+        else:
+            si.registered = False
 
 
 def get_matching_patch(series_list: list[SeriesItem], patch: str) -> int:
@@ -509,7 +508,7 @@ def command_delete(args: argparse.Namespace):
         patch_list = run_stg_series()
         patch_names = [
             si.patchname for si in remove_list
-            if get_matching_patch_in_stg_series(patch_list, si.patchname) >= 0
+            if get_matching_patch_in_stg_series(patch_list, si.patchname)
         ]
         if patch_names:
             returncode = subprocess.run([conf.stg, "delete", "--"] + patch_names).returncode
@@ -576,11 +575,11 @@ def command_edit(args: argparse.Namespace, argv: list[str]):
 
 def get_matching_patch_in_stg_series(
     patch_list: list[StgSeriesItem], patch: str
-) -> int:
-    for i, p in enumerate(patch_list):
+) -> Optional[StgSeriesItem]:
+    for p in patch_list:
         if p.patchname == patch:
-            return i
-    return -1
+            return p
+    return None
 
 
 def command_fold(args: argparse.Namespace):
@@ -611,7 +610,7 @@ def command_fold(args: argparse.Namespace):
         si = series_list[idx]
         patchpath = patdir / si.patchfile
 
-        if get_matching_patch_in_stg_series(patch_list, si.patchname) >= 0:
+        if get_matching_patch_in_stg_series(patch_list, si.patchname):
             # Run "stg squash"
             res = subprocess.run([conf.stg, "squash", "--", si.patchname])
         else:
@@ -1347,9 +1346,8 @@ def command_rename(args: argparse.Namespace):
         old_patchname = series_list[idx].patchname
     else:
         patch_list = run_stg_series()
-        j = get_matching_patch_in_stg_series(patch_list, series_list[idx].patchname)
-        if j >= 0:
-            old_patchname = patch_list[j].patchname
+        if p := get_matching_patch_in_stg_series(patch_list, series_list[idx].patchname):
+            old_patchname = p.patchname
     if old_patchname:
         ok, patchname = run_stg_rename(target, old_patchname)
         if ok:
