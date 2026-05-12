@@ -298,7 +298,7 @@ def update_series_by_stg_series(
     series_list: list[SeriesItem],
     patch_list: list[StgSeriesItem],
 ):
-    # Add the patches that are registerd in stg series to stq series.
+    # Add the patches that are registered in stg series to stq series.
     # If already added, update it.
     idx = get_last_applied_patch_idx(series_list) + 1
     for p in patch_list:
@@ -478,7 +478,7 @@ def command_delete(args: argparse.Namespace):
     if args.top:
         si = get_last_applied_patch(series_list)
         if not si:
-            print("stq: No patches appled", file=sys.stderr)
+            print("stq: No patches applied", file=sys.stderr)
             sys.exit(1)
         remove_list += [si]
     else:
@@ -563,7 +563,7 @@ def command_edit(args: argparse.Namespace, argv: list[str]):
 
     si = get_last_applied_patch(series_list)
     if not si:
-        print("stq: no patches applied", file=sys.stderr)
+        print("stq: No patches applied", file=sys.stderr)
         sys.exit(1)
 
     # Run "stg edit"
@@ -707,7 +707,7 @@ def command_guard(args: argparse.Namespace):
     for g in guard:
         if len(g) <= 1 or (g[0] != "+" and g[0] != "-"):
             print(
-                f'stq: wrong guard name: {g}, must be prefixed by "+" or "-"',
+                f'stq: Wrong guard name: {g}, must be prefixed by "+" or "-"',
                 file=sys.stderr,
             )
         if g[0] == "+":
