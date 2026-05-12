@@ -143,6 +143,7 @@ class SeriesItem:
         applied: Optional[str] = None,  # None, "applied", "unapplied"
         guarded: Optional[str] = None,  # None, "guarded", "unguarded"
         commitid: Optional[str] = None,
+        registered: Optional[bool] = None,
     ):
         assert applied in [None, "applied", "unapplied"]
         assert guarded in [None, "guarded", "unguarded"]
@@ -154,6 +155,7 @@ class SeriesItem:
         self.applied = applied
         self.guarded = guarded
         self.commitid = commitid
+        self.registered = registered
 
 
 class StgSeriesItem:
@@ -307,10 +309,14 @@ def update_series_by_stg_series(
     # Update applied status
     for si in series_list:
         j = get_matching_patch_in_stg_series(patch_list, si.patchname)
-        if j >= 0 and patch_list[j].applied:
-            si.applied = "applied"
+        if j < 0:
+            si.registered = False
         else:
-            si.applied = "unapplied"
+            si.registered = True
+            if patch_list[j].applied:
+                si.applied = "applied"
+            else:
+                si.applied = "unapplied"
 
 
 def get_matching_patch(series_list: list[SeriesItem], patch: str) -> int:
@@ -1396,12 +1402,10 @@ def command_repair(args: argparse.Namespace):
                 if res.returncode:
                     sys.exit(res.returncode)
 
-            for p in patch_list:
-                j = get_matching_patch(series_list, p.patchname)
-                if j >= 0:
-                    patchfile = series_list[j].patchfile
-                    print(f"Updating: {patchfile}")
-                    shutil.copy(tmpdir / p.patchname, patdir / patchfile)
+            for si in series_list:
+                if si.registered:
+                    print(f"Updating: {si.patchfile}")
+                    shutil.copy(tmpdir / si.patchname, patdir / si.patchfile)
 
     print("Updating: series")
     write_series(series, series_list)
