@@ -228,7 +228,7 @@ def write_series(series: Path, series_list: list[SeriesItem]) -> None:
             print(s, file=f)
 
 
-def update_series(
+def update_or_add_to_series(
     series_list: list[SeriesItem], patchname: str, insert_idx: int, applied: bool
 ) -> tuple[str, bool]:
     # Search patchname from series_list
@@ -300,9 +300,9 @@ def update_series_by_stg_series(
 ):
     # Add the patches that are registerd in stg series to stq series.
     # If already added, update it.
-    idx = get_last_applied_patch(series_list) + 1
+    idx = get_last_applied_patch_idx(series_list) + 1
     for p in patch_list:
-        _, added = update_series(series_list, p.patchname, idx, p.applied)
+        _, added = update_or_add_to_series(series_list, p.patchname, idx, p.applied)
         if added:
             idx += 1
 
@@ -318,14 +318,22 @@ def update_series_by_stg_series(
             si.registered = False
 
 
-def get_matching_patch(series_list: list[SeriesItem], patch: str) -> int:
+def get_matching_patch_idx(series_list: list[SeriesItem], patch: str) -> int:
     for i, si in enumerate(series_list):
         if si.patchfile == patch or si.patchname == patch:
             return i
     return -1
 
 
-def get_last_applied_patch(series_list: list[SeriesItem]) -> int:
+def get_matching_patch(
+    series_list: list[SeriesItem], patch: str
+) -> Optional[SeriesItem]:
+    if (i := get_matching_patch_idx(series_list, patch)) >= 0:
+        return series_list[i]
+    return None
+
+
+def get_last_applied_patch_idx(series_list: list[SeriesItem]) -> int:
     idx = -1
     for i, si in enumerate(series_list):
         if si.applied == "applied":
@@ -333,33 +341,24 @@ def get_last_applied_patch(series_list: list[SeriesItem]) -> int:
     return idx
 
 
-def get_next_ungarded_patch(series_list: list[SeriesItem], start_idx: int = -1) -> int:
-    if start_idx < 0:
-        idx = get_last_applied_patch(series_list)
-    else:
-        idx = start_idx
-    for i in range(idx + 1, len(series_list)):
-        si = series_list[i]
-        if si.guarded == "unguarded":
-            return i
-    return -1
-
-
-def get_ungarded_patch_indexes(
-    series_list: list[SeriesItem], start_idx: int = -1
-) -> list[int]:
-    idx_list: list[int] = []
-    idx = start_idx
-    while (idx := get_next_ungarded_patch(series_list, idx)) >= 0:
-        idx_list += [idx]
-    return idx_list
+def get_last_applied_patch(series_list: list[SeriesItem]) -> Optional[SeriesItem]:
+    if (i := get_last_applied_patch_idx(series_list)) >= 0:
+        return series_list[i]
+    return None
 
 
 def get_ungarded_patch_list(
     series_list: list[SeriesItem], start_idx: int = -1
 ) -> list[SeriesItem]:
-    idx_list = get_ungarded_patch_indexes(series_list, start_idx)
-    return [series_list[i] for i in idx_list]
+    filtered_list: list[SeriesItem] = []
+    if start_idx < 0:
+        idx = get_last_applied_patch_idx(series_list)
+    else:
+        idx = start_idx
+    for si in series_list[idx + 1 :]:
+        if si.guarded == "unguarded":
+            filtered_list += [si]
+    return filtered_list
 
 
 def get_stg_commitid(patchname: str) -> str:
@@ -476,11 +475,11 @@ def command_delete(args: argparse.Namespace):
 
     remove_list: list[SeriesItem] = []
     if args.top:
-        idx = get_last_applied_patch(series_list)
-        if idx < 0:
+        si = get_last_applied_patch(series_list)
+        if not si:
             print("stq: No patches appled", file=sys.stderr)
             sys.exit(1)
-        remove_list += [series_list[idx]]
+        remove_list += [si]
     else:
         if not args.patch:
             print("stq: No patches specified", file=sys.stderr)
@@ -558,8 +557,8 @@ def command_edit(args: argparse.Namespace, argv: list[str]):
     update_series_by_guards(series_list, guards_list)
     update_series_by_status(series_list, status_list)
 
-    idx = get_last_applied_patch(series_list)
-    if idx < 0:
+    si = get_last_applied_patch(series_list)
+    if not si:
         print("stq: no patches applied", file=sys.stderr)
         sys.exit(1)
 
@@ -570,7 +569,7 @@ def command_edit(args: argparse.Namespace, argv: list[str]):
         sys.exit(res.returncode)
 
     # Update the current patch file
-    refresh_patch(patdir, series_list, idx)
+    refresh_patch(patdir, si)
 
 
 def get_matching_patch_in_stg_series(
@@ -595,19 +594,18 @@ def command_fold(args: argparse.Namespace):
     update_series_by_guards(series_list, guards_list)
     update_series_by_status(series_list, status_list)
 
-    idx = get_last_applied_patch(series_list)
-    if idx < 0:
+    last_si = get_last_applied_patch(series_list)
+    if not last_si:
         print("stq: No patches applied", file=sys.stderr)
         sys.exit(1)
 
     patch_list = run_stg_series("unapplied")
 
     for patchname in args.patch:
-        idx = get_matching_patch(series_list, patchname)
-        if idx < 0:
+        si = get_matching_patch(series_list, patchname)
+        if not si:
             print(f"stq: Patch not found: {patchname}", file=sys.stderr)
             sys.exit(1)
-        si = series_list[idx]
         patchpath = patdir / si.patchfile
 
         if get_matching_patch_in_stg_series(patch_list, si.patchname):
@@ -631,8 +629,7 @@ def command_fold(args: argparse.Namespace):
     write_series(series, series_list)
 
     # Update the current patch file
-    idx = get_last_applied_patch(series_list)
-    refresh_patch(patdir, series_list, idx)
+    refresh_patch(patdir, last_si)
 
 
 def show_guard_status(si: SeriesItem):
@@ -685,17 +682,15 @@ def command_guard(args: argparse.Namespace):
             patch = None
 
     if patch:
-        idx = get_matching_patch(series_list, patch)
-        if idx < 0:
+        si = get_matching_patch(series_list, patch)
+        if not si:
             print(f"stq: No patch named {patch}", file=sys.stderr)
             sys.exit(1)
     else:
-        idx = get_last_applied_patch(series_list)
-        if idx < 0:
+        si = get_last_applied_patch(series_list)
+        if not si:
             print("stq: No patches applied", file=sys.stderr)
             sys.exit(1)
-
-    si = series_list[idx]
 
     if not guard and not args.none:
         # Show guards of the patch
@@ -737,7 +732,7 @@ def import_patches(patches: list[Path]) -> None:
     added_patches: list[SeriesItem] = []
     for patch in patches:
         print(f"stq: Importing {patch}")
-        if get_matching_patch(series_list, patch.name) >= 0:
+        if get_matching_patch(series_list, patch.name):
             print(f"stq: Same patch name already exists: {patch.name}", file=sys.stderr)
             sys.exit(1)
         shutil.copy(patch, patdir)
@@ -854,7 +849,7 @@ def command_new(args: argparse.Namespace):
     commitid = ""  # get_stg_commitid(patchname)
     status_list += [StatusItem(commitid, patchname)]
 
-    idx = get_last_applied_patch(series_list) + 1
+    idx = get_last_applied_patch_idx(series_list) + 1
     series_list.insert(
         idx,
         SeriesItem(args.name, patchname, [], [], "applied", "unguarded", commitid),
@@ -904,8 +899,7 @@ def pop_patches(
     update_series_by_guards(series_list, guards_list)
     update_series_by_status(series_list, status_list)
 
-    idx = get_last_applied_patch(series_list)
-    if idx < 0:
+    if not get_last_applied_patch(series_list):
         if ignore_nopatches:
             return
         print("stq: No patches applied", file=sys.stderr)
@@ -1132,7 +1126,7 @@ def push_patches(
     if not pushall:
         idx = -1
         if patchname:
-            idx = get_matching_patch(filtered_list, patchname)
+            idx = get_matching_patch_idx(filtered_list, patchname)
             if idx < 0:
                 print(f"stq: Patch not found: {patchname}", file=sys.stderr)
                 sys.exit(1)
@@ -1145,7 +1139,7 @@ def push_patches(
             filtered_list = [si]
             # Reorder series_list
             series_list.remove(si)
-            i = get_last_applied_patch(series_list) + 1
+            i = get_last_applied_patch_idx(series_list) + 1
             series_list.insert(i, si)
         else:
             if idx >= 0:
@@ -1242,12 +1236,10 @@ def command_qgit(args: argparse.Namespace, argv: list[str]):
         sys.exit(res.returncode)
 
 
-def refresh_patch(patdir: Path, series_list: list[SeriesItem], idx: int):
-    assert idx >= 0
-
-    patchname = series_list[idx].patchname
+def refresh_patch(patdir: Path, si: SeriesItem):
+    patchname = si.patchname
     assert patchname
-    patchfile = series_list[idx].patchfile
+    patchfile = si.patchfile
     print(f"Updating patch file: {patchfile}")
 
     with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
@@ -1281,8 +1273,8 @@ def command_refresh(args: argparse.Namespace):
     update_series_by_guards(series_list, guards_list)
     update_series_by_status(series_list, status_list)
 
-    idx = get_last_applied_patch(series_list)
-    if idx < 0:
+    si = get_last_applied_patch(series_list)
+    if not si:
         print("stq: No patches applied", file=sys.stderr)
         sys.exit(1)
 
@@ -1293,7 +1285,7 @@ def command_refresh(args: argparse.Namespace):
 
     if False:
         # Update commitid (disabled for now)
-        patchname = series_list[idx].patchname
+        patchname = si.patchname
         commitid = get_stg_commitid(patchname)
         if commitid:
             status_list[-1].commitid = commitid
@@ -1301,7 +1293,7 @@ def command_refresh(args: argparse.Namespace):
         write_status(status, status_list)
 
     # Update the current patch file
-    refresh_patch(patdir, series_list, idx)
+    refresh_patch(patdir, si)
 
 
 def command_rename(args: argparse.Namespace):
@@ -1318,17 +1310,14 @@ def command_rename(args: argparse.Namespace):
     update_series_by_status(series_list, status_list)
 
     if args.patch2:
-        for i, si in enumerate(series_list):
-            if si.patchfile == args.patch1 or si.patchname == args.patch1:
-                idx = i
-                break
-        else:
+        si = get_matching_patch(series_list, args.patch1)
+        if not si:
             print(f"stq: Patch file not found: {args.patch1}", file=sys.stderr)
             sys.exit(1)
         target = args.patch2
     else:
-        idx = get_last_applied_patch(series_list)
-        if idx < 0:
+        si = get_last_applied_patch(series_list)
+        if not si:
             print("stq: No patches applied", file=sys.stderr)
             sys.exit(1)
         target = args.patch1
@@ -1338,24 +1327,24 @@ def command_rename(args: argparse.Namespace):
     if target_path.exists():
         print(f"stq: Patch already exists: {target}", file=sys.stderr)
         sys.exit(1)
-    shutil.move(patdir / series_list[idx].patchfile, target_path)
+    shutil.move(patdir / si.patchfile, target_path)
 
     # Rename stg patchname if registered
     old_patchname = ""
-    if series_list[idx].applied == "applied":
-        old_patchname = series_list[idx].patchname
+    if si.applied == "applied":
+        old_patchname = si.patchname
     else:
         patch_list = run_stg_series()
-        if p := get_matching_patch_in_stg_series(patch_list, series_list[idx].patchname):
+        if p := get_matching_patch_in_stg_series(patch_list, si.patchname):
             old_patchname = p.patchname
     if old_patchname:
         ok, patchname = run_stg_rename(target, old_patchname)
         if ok:
-            series_list[idx].patchname = patchname
+            si.patchname = patchname
 
-    if not series_list[idx].patchname:
-        series_list[idx].patchname = series_list[idx].patchfile
-    series_list[idx].patchfile = target
+    if not si.patchname:
+        si.patchname = si.patchfile
+    si.patchfile = target
 
     write_series(series, series_list)
     write_status_from_series(status, series_list)
@@ -1458,9 +1447,8 @@ def command_select(args: argparse.Namespace):
     patchname = ""
     if args.pop or args.reapply:
         if args.reapply:
-            i = get_last_applied_patch(series_list)
-            if i >= 0:
-                patchname = series_list[i].patchname
+            if si := get_last_applied_patch(series_list):
+                patchname = si.patchname
         pop_patches(popall=True)
 
     write_guards(guards, new_guards_list)
