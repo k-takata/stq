@@ -1183,7 +1183,7 @@ def push_patches(
 
     # Push remaining patches that are not registered
     for si in filtered_list:
-        print(si.patchfile)
+        print(f"Pushing patch file: {si.patchfile}")
         apply_cleanly, si.patchname = run_stg_import(
             patdir / si.patchfile, si.patchname
         )
@@ -1420,18 +1420,26 @@ def command_select(args: argparse.Namespace):
 
     # TODO: Compare guards_list and new_guards_list.
 
-    patchname = ""
+    last_patchname = ""
     if args.pop or args.reapply:
         if args.reapply:
             if si := get_last_applied_patch(series_list):
-                patchname = si.patchname
+                last_patchname = si.patchname
         pop_patches(popall=True)
 
     write_guards(guards, new_guards_list)
 
-    if args.reapply and patchname:
-        # TODO: handle the case that patchname is guarded
-        push_patches(patchname=patchname)
+    if args.reapply and last_patchname:
+        # Reapply the unguarded patches until patchname
+        new_patchname = ""
+        update_series_by_guards(series_list, new_guards_list)
+        for si in series_list:
+            if si.guarded == "unguarded":
+                new_patchname = si.patchname
+            if si.patchname == last_patchname or si.patchfile == last_patchname:
+                break
+        if new_patchname:
+            push_patches(patchname=new_patchname)
 
 
 def command_series(args: argparse.Namespace):
