@@ -1425,7 +1425,7 @@ def command_select(args: argparse.Namespace):
         if args.reapply:
             if si := get_last_applied_patch(series_list):
                 last_patchname = si.patchname
-        pop_patches(popall=True)
+        pop_patches(popall=True, ignore_nopatches=True)
 
     write_guards(guards, new_guards_list)
 
