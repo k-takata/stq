@@ -626,6 +626,7 @@ def command_fold(args: argparse.Namespace):
     write_series(series, series_list)
 
     # Update the current patch file
+    idx = get_last_applied_patch(series_list)
     refresh_patch(patdir, series_list, idx)
 
 
