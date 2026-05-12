@@ -316,6 +316,7 @@ def update_series_by_stg_series(
                 si.applied = "unapplied"
         else:
             si.registered = False
+            si.applied = "unapplied"
 
 
 def get_matching_patch_idx(series_list: list[SeriesItem], patch: str) -> int:
