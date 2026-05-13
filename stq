@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# stq: A Mercurial-Queues-like wrapper for StGit
+
 import argparse
 import os
 import re
