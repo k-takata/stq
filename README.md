@@ -27,10 +27,10 @@ Initialize the patch directory:
 $ stq init
 ```
 
-Create a new patch named `new-fearure-1.patch`:
+Create a new patch named `new-feature-1.patch`:
 
 ```shell
-$ stq new new-fearure-1.patch
+$ stq new new-feature-1.patch
 ```
 
 Edit somefile:
@@ -39,13 +39,13 @@ Edit somefile:
 $ vim somefile
 ```
 
-Refresh new-fearure-1.patch:
+Refresh new-feature-1.patch:
 
 ```shell
 $ stq refresh
 ```
 
-Now, `.git/patches/new-fearure-1.patch` has the change just we made.
+Now, `.git/patches/new-feature-1.patch` has the change just we made.
 
 List all patches:
 
