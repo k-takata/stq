@@ -1148,6 +1148,10 @@ def run_stg_import(patchfile: Path, patchname: Optional[str]) -> tuple[bool, str
 def run_stg_push_multi(
     patchname_list: list[str],
 ) -> tuple[bool, list[tuple[str, bool]]]:
+    res: list[tuple[str, bool]] = []
+    if not patchname_list:
+        return True, res
+
     stgcmd = [conf.stg, "push", "--"] + patchname_list
     proc = subprocess.Popen(
         stgcmd,
@@ -1157,7 +1161,6 @@ def run_stg_push_multi(
     )
     assert proc.stdout
 
-    res: list[tuple[str, bool]] = []
     while True:
         line = proc.stdout.readline()
         if not line:
