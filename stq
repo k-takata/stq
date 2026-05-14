@@ -468,7 +468,7 @@ def command_clean(args: argparse.Namespace):
         # Run "git diff"
         res = subprocess.run([conf.git, "diff", "HEAD", "--quiet"])
         if res.returncode:
-            print(f"stq: Local changes found.", file=sys.stderr)
+            print("stq: Local changes found.", file=sys.stderr)
             sys.exit(res.returncode)
 
     patch_list = run_stg_series()
