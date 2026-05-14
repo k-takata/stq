@@ -446,6 +446,60 @@ def write_status_from_series(status: Path, series_list: list[SeriesItem]) -> Non
                 print(f"{si.commitid}:{patchname}", file=f)
 
 
+def command_clean(args: argparse.Namespace):
+    patdir = ensure_patchesdir()
+
+    series = patdir / "series"
+    series_list = read_series(series)
+    status = patdir / "status"
+    status_list = read_status(status)
+    guards = patdir / "guards"
+    guards_list = read_guards(guards)
+
+    update_series_by_guards(series_list, guards_list)
+    update_series_by_status(series_list, status_list)
+
+    if not args.unapplied:
+        # If the current stg patch is empty, and if there are changes
+        # in the work directory, we don't want to delete it.
+
+        # TODO: Check if the current stg patch is empty.
+
+        # Run "git diff"
+        res = subprocess.run([conf.git, "diff", "HEAD", "--quiet"])
+        if res.returncode:
+            print(f"stq: Local changes found.", file=sys.stderr)
+            sys.exit(res.returncode)
+
+    patch_list = run_stg_series()
+    if len(patch_list) == 0:
+        print("stq: No patches registered in StGit.")
+        return
+    update_series_by_stg_series(series_list, patch_list)
+
+    # Run "stg clean"
+    stgcmd = [conf.stg, "clean"]
+    if args.applied:
+        stgcmd += ["--applied"]
+    if args.unapplied:
+        stgcmd += ["--unapplied"]
+    res = subprocess.run(stgcmd)
+    if res.returncode:
+        sys.exit(res.returncode)
+
+    # Update series based on the new stg series
+    new_patch_list = run_stg_series()
+    series_list = [
+        si
+        for si in series_list
+        if not si.registered
+        or get_matching_patch_in_stg_series(new_patch_list, si.patchname)
+    ]
+
+    write_series(series, series_list)
+    write_status_from_series(status, series_list)
+
+
 def command_clone(args: argparse.Namespace):
     # Run "stg clone"
     res = subprocess.run([conf.stg, "clone", args.repository, args.dir])
@@ -1590,6 +1644,26 @@ def main() -> None:
         exit_on_error=False,
     )
     subparsers = parser.add_subparsers()
+
+    # clean
+    parser_clean = subparsers.add_parser(
+        "clean",
+        help="delete the empty patches in the series",
+        description="Delete the empty patches in the series.",
+    )
+    parser_clean.add_argument(
+        "-a",
+        "--applied",
+        action="store_true",
+        help="delete the empty applied patches",
+    )
+    parser_clean.add_argument(
+        "-u",
+        "--unapplied",
+        action="store_true",
+        help="delete the empty unapplied patches",
+    )
+    parser_clean.set_defaults(handler=command_clean)
 
     # clone
     parser_clone = subparsers.add_parser(
