@@ -1145,7 +1145,7 @@ def run_stg_import(patchfile: Path, patchname: Optional[str]) -> tuple[bool, str
     return False, ""
 
 
-def run_stg_push_multi(
+def run_stg_push(
     patchname_list: list[str],
 ) -> tuple[bool, list[tuple[str, bool]]]:
     res: list[tuple[str, bool]] = []
@@ -1176,13 +1176,6 @@ def run_stg_push_multi(
     if proc.returncode != 0:
         return False, res
     return True, res
-
-
-def run_stg_push(patchname: str) -> tuple[str, bool]:
-    ok, res = run_stg_push_multi([patchname])
-    if not ok or len(res) == 0:
-        return "", True
-    return res[0]
 
 
 def push_patches(
@@ -1253,7 +1246,7 @@ def push_patches(
                 remain_filtered_list += [si]
         filtered_list = remain_filtered_list
 
-        ok, ret = run_stg_push_multi(patchname_list)
+        ok, ret = run_stg_push(patchname_list)
 
         for patchname, unmodified in ret:
             commitid = ""  # get_stg_commitid(patchname)
