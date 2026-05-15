@@ -7,7 +7,7 @@
 There are already several [Mercurial-Queues](https://wiki.mercurial-scm.org/MqExtension)-like tools for Git. [Guilt](https://github.com/git-guilt/guilt) is one of them. However, Guilt is extremely slow on Windows.
 [StGit](https://stacked-git.github.io/) is another option. The speed is fast enough, but the usage is different from Mercurial Queue. It stores all metadata as Git objects, and managing the patch files themselves is not easy.
 
-Stq is a wrapper for StGit that stores patch files in `.git/patches/`, like Mercurial Queues. Users can also manage the patch files with Git and easily publish them, e.g., on GitHub.
+Stq is a wrapper for StGit that stores patch files in `.git/stq-patches/`, similar to Mercurial Queues. Users can also manage the patch files with Git and easily publish them, e.g., on GitHub.
 
 
 ## Requirements
@@ -45,7 +45,7 @@ Refresh new-feature-1.patch:
 $ stq refresh
 ```
 
-Now, `.git/patches/new-feature-1.patch` has the change just we made.
+Now, `.git/stq-patches/new-feature-1.patch` has the change just we made.
 
 List all patches:
 
@@ -71,7 +71,7 @@ Pull the latest changes from the remote repository:
 $ stq pull
 ```
 
-Run the git command (e.g. `git status`) in the `.git/patches/` directory:
+Run the git command (e.g. `git status`) in the `.git/stq-patches/` directory:
 
 ```shell
 $ stq qgit status
@@ -94,6 +94,19 @@ $ git config set --global stgit.namelength 60  # Default is 30. (0 means unlimit
 ```
 
 Stq itself doesn't have any settings for now.
+
+## Appendix
+
+### Installing StGit 1.5
+
+```shell
+$ git clone https://github.com/stacked-git/stgit.git
+$ git checkout v1.5
+$ make all
+$ python3 setup.py install --user
+```
+
+See `INSTALL` in the stgit directory for details.
 
 ## License
 

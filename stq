@@ -95,11 +95,11 @@ def get_gitdir(path: Optional[Path] = None) -> Optional[Path]:
 
 
 def get_patchesdir(path: Optional[Path] = None) -> Optional[Path]:
-    """Get the patches directory. (E.g. ".git/patches")"""
+    """Get the patches directory. (E.g. ".git/stq-patches")"""
     git_dir = get_gitdir(path)
     if not git_dir:
         return None
-    return git_dir / "patches"
+    return git_dir / "stq-patches"
 
 
 def ensure_patchesdir(path: Optional[Path] = None, create: bool = False) -> Path:
@@ -509,7 +509,7 @@ def command_clone(args: argparse.Namespace):
     if args.patches:
         # Run "git clone" for patdir
         res = subprocess.run(
-            [conf.git, "clone", args.patches, f"{args.dir}/.git/patches"]
+            [conf.git, "clone", args.patches, f"{args.dir}/.git/stq-patches"]
         )
         if res.returncode:
             sys.exit(res.returncode)
