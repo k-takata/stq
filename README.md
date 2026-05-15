@@ -85,6 +85,16 @@ Subcommands can be shortened if they are not ambiguous. E.g.:
 $ stq ser  # Same as "stq series"
 ```
 
+## Settings
+
+If you use a long name for a patch file, consider increasing `stgit.namelength`. E.g.:
+
+```shell
+$ git config set --global stgit.namelength 60  # Default is 30. (0 means unlimited.)
+```
+
+Stq itself doesn't have any settings for now.
+
 ## License
 
 MIT License
