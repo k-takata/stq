@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # Color definitions
 COLOR_BLACK = "\x1b[30m"
