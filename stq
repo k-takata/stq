@@ -489,15 +489,24 @@ def command_clean(args: argparse.Namespace):
 
     # Update series based on the new stg series
     new_patch_list = run_stg_series()
-    series_list = [
-        si
-        for si in series_list
-        if not si.registered
-        or get_matching_patch_in_stg_series(new_patch_list, si.patchname)
-    ]
+    new_series_list: list[SeriesItem] = []
+    remove_list: list[SeriesItem] = []
+    for si in series_list:
+        if not si.registered or get_matching_patch_in_stg_series(
+            new_patch_list, si.patchname
+        ):
+            new_series_list += [si]
+        else:
+            remove_list += [si]
 
-    write_series(series, series_list)
-    write_status_from_series(status, series_list)
+    if not args.keep:
+        for si in remove_list:
+            patch_path = patdir / si.patchfile
+            if patch_path.exists():
+                patch_path.unlink()
+
+    write_series(series, new_series_list)
+    write_status_from_series(status, new_series_list)
 
 
 def command_clone(args: argparse.Namespace):
@@ -1658,6 +1667,9 @@ def main() -> None:
         "--unapplied",
         action="store_true",
         help="delete the empty unapplied patches",
+    )
+    parser_clean.add_argument(
+        "-k", "--keep", action="store_true", help="keep patch file"
     )
     parser_clean.set_defaults(handler=command_clean)
 
