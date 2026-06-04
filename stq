@@ -868,9 +868,16 @@ def command_init(args: argparse.Namespace):
     init_stq(args.skip_stg)
 
 
-def run_stg_new(patchname: str, message: str = "") -> str:
+def run_stg_new(
+    patchname: str, message: str = "", argv: Optional[list[str]] = None
+) -> str:
+    stgcmd = [conf.stg, "new", f"--message={message}"]
+    if argv:
+        stgcmd += argv
+    stgcmd += ["--", patchname]
+
     proc = subprocess.Popen(
-        [conf.stg, "new", f"--message={message}", "--", patchname],
+        stgcmd,
         encoding="utf-8",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -892,7 +899,7 @@ def run_stg_new(patchname: str, message: str = "") -> str:
     return new_patchname
 
 
-def command_new(args: argparse.Namespace):
+def command_new(args: argparse.Namespace, argv: list[str]):
     patdir = ensure_patchesdir()
 
     series = patdir / "series"
@@ -911,7 +918,7 @@ def command_new(args: argparse.Namespace):
         message = args.name
 
     # Run "stg new"
-    patchname = run_stg_new(args.name, message)
+    patchname = run_stg_new(args.name, message, argv)
     if not patchname:
         sys.exit(1)
 
@@ -1800,7 +1807,9 @@ def main() -> None:
         description="Create a new, empty patch.",
     )
     parser_new.add_argument("name", help="name of the new patch")
-    parser_new.add_argument("-m", "--message", help="use text as commit message")
+    parser_new.add_argument(
+        "-m", "--message", help="use text as commit message (default: patch name)"
+    )
     parser_new.set_defaults(handler=command_new)
 
     # pop
@@ -1974,7 +1983,8 @@ def main() -> None:
         os.chdir(args.path)
 
     if hasattr(args, "handler"):
-        if args.handler in [command_edit, command_qgit]:
+        if args.handler in [command_edit, command_new, command_qgit]:
+            # Pass unrecognized args to the handler.
             return args.handler(args, argv)
 
         if argv:
