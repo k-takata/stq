@@ -1351,7 +1351,7 @@ def refresh_patch(patdir: Path, si: SeriesItem):
         shutil.copy(tmpdir / patchname, patdir / patchfile)
 
 
-def command_refresh(args: argparse.Namespace):
+def command_refresh(args: argparse.Namespace, argv: list[str]):
     patdir = ensure_patchesdir()
 
     series = patdir / "series"
@@ -1370,7 +1370,7 @@ def command_refresh(args: argparse.Namespace):
         sys.exit(1)
 
     # Run "stg refresh"
-    res = subprocess.run([conf.stg, "refresh"])
+    res = subprocess.run([conf.stg, "refresh"] + argv)
     if res.returncode:
         sys.exit(res.returncode)
 
@@ -2013,7 +2013,7 @@ def main() -> None:
         os.chdir(args.path)
 
     if hasattr(args, "handler"):
-        if args.handler in [command_edit, command_new, command_qgit]:
+        if args.handler in [command_edit, command_new, command_qgit, command_refresh]:
             # Pass unrecognized args to the handler.
             return args.handler(args, argv)
 
