@@ -1273,42 +1273,47 @@ def push_patches(
 
     patch_list = run_stg_series("unapplied")
 
-    if len(patch_list) > 0:
-        # There are patches already in stg series
-        patchname_list: list[str] = []
-        remain_filtered_list: list[SeriesItem] = []
-        for si in filtered_list:
-            patchname = si.patchname if si.patchname else si.patchfile
-            if p := get_matching_patch_in_stg_series(patch_list, patchname):
-                patchname_list += [p.patchname]
-                patch_list.remove(p)
-            else:
-                remain_filtered_list += [si]
-        filtered_list = remain_filtered_list
+    patchname_list: list[str] = []
+    sentinel = SeriesItem("", "", [], [])
+    for si in filtered_list + [sentinel]:
+        patchname = si.patchname if si.patchname else si.patchfile
+        if si is not sentinel and (
+            p := get_matching_patch_in_stg_series(patch_list, patchname)
+        ):
+            # Already, registered in stg
+            patchname_list += [p.patchname]
+            patch_list.remove(p)
+        else:
+            # Not registered in stg
+            if patchname_list:
+                # Push the registered patches first.
+                ok, ret = run_stg_push(patchname_list)
 
-        ok, ret = run_stg_push(patchname_list)
+                for patchname, unmodified in ret:
+                    commitid = ""  # get_stg_commitid(patchname)
+                    status_list += [StatusItem(commitid, patchname)]
+                if not ok:
+                    write_series(series, series_list)
+                    write_status(status, status_list)
+                    sys.exit(1)
 
-        for patchname, unmodified in ret:
-            commitid = ""  # get_stg_commitid(patchname)
-            status_list += [StatusItem(commitid, patchname)]
-        if not ok:
-            write_series(series, series_list)
-            write_status(status, status_list)
-            sys.exit(1)
+                patchname_list = []
 
-    # Push remaining patches that are not registered
-    for si in filtered_list:
-        print(f"Pushing patch file: {si.patchfile}")
-        apply_cleanly, si.patchname = run_stg_import(
-            patdir / si.patchfile, si.patchname
-        )
-        si.commitid = ""  # get_stg_commitid(si.patchname)
-        status_list += [StatusItem(si.commitid, si.patchname)]
+            if si is sentinel:
+                break
 
-        if not apply_cleanly:
-            write_series(series, series_list)
-            write_status(status, status_list)
-            sys.exit(1)
+            # Import the patch to stg
+            print(f"Pushing patch file: {si.patchfile}")
+            apply_cleanly, si.patchname = run_stg_import(
+                patdir / si.patchfile, si.patchname
+            )
+            si.commitid = ""  # get_stg_commitid(si.patchname)
+            status_list += [StatusItem(si.commitid, si.patchname)]
+
+            if not apply_cleanly:
+                write_series(series, series_list)
+                write_status(status, status_list)
+                sys.exit(1)
 
     write_series(series, series_list)
     write_status(status, status_list)
