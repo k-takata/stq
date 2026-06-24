@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -135,45 +136,32 @@ def write_guards(guards: Path, guards_list: list[str]) -> None:
             print(s, file=f)
 
 
+@dataclass
 class SeriesItem:
-    def __init__(
-        self,
-        patchfile: str,
-        patchname: str,
-        positive_guards: list[str],
-        negative_guards: list[str],
-        applied: Optional[str] = None,  # None, "applied", "unapplied"
-        guarded: Optional[str] = None,  # None, "guarded", "unguarded"
-        commitid: Optional[str] = None,
-        registered: Optional[bool] = None,
-    ):
-        assert applied in [None, "applied", "unapplied"]
-        assert guarded in [None, "guarded", "unguarded"]
+    patchfile: str
+    patchname: str
+    positive_guards: list[str]
+    negative_guards: list[str]
+    applied: Optional[str] = None  # None, "applied", "unapplied"
+    guarded: Optional[str] = None  # None, "guarded", "unguarded"
+    commitid: Optional[str] = None
+    registered: Optional[bool] = None
 
-        self.patchfile = patchfile
-        self.patchname = patchname
-        self.positive_guards = positive_guards
-        self.negative_guards = negative_guards
-        self.applied = applied
-        self.guarded = guarded
-        self.commitid = commitid
-        self.registered = registered
+    def __post_init__(self):
+        assert self.applied in [None, "applied", "unapplied"]
+        assert self.guarded in [None, "guarded", "unguarded"]
 
 
+@dataclass
 class StgSeriesItem:
-    def __init__(
-        self,
-        patchname: str,
-        applied: bool,
-    ):
-        self.patchname = patchname
-        self.applied = applied
+    patchname: str
+    applied: bool
 
 
+@dataclass
 class StatusItem:
-    def __init__(self, commitid: str, patchname: str):
-        self.commitid = commitid
-        self.patchname = patchname
+    commitid: str
+    patchname: str
 
 
 def read_series(series: Path) -> list[SeriesItem]:
