@@ -230,6 +230,7 @@ def update_or_add_to_series(
                 si.applied = "applied"
             else:
                 si.applied = "unapplied"
+            si.registered = "registered"
             return si.patchfile, False
 
     # Not found, add to series_list
@@ -243,7 +244,16 @@ def update_or_add_to_series(
         commitid = None
     series_list.insert(
         insert_idx,
-        SeriesItem(patchname, "", [], [], applied_str, "unguarded", commitid),
+        SeriesItem(
+            patchname,
+            patchname,
+            [],
+            [],
+            applied_str,
+            "unguarded",
+            commitid,
+            "registered",
+        ),
     )
     return patchname, True
 
